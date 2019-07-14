@@ -1,0 +1,29 @@
+name: HelloWorld
+version: ${project.version}
+main: banano.bananominecraft.helloworld.HelloWorld
+api-version: 1.13
+authors: [Kirby]
+description: Hello World
+commands:
+  poop:
+    description: Yucky.
+    aliases: [poo]
+
+  nodeinfo:
+    description: Prints node info
+    aliases: [node]
+
+  deposit:
+    aliases: [dep]
+    description: Displays your deposit address
+
+  tip:
+    description: Send a tip to another player
+
+  withdraw:
+    description: Withdraw bans to an address
+
+  balance:
+    description: Displays your balance
+    aliases: [bal]
+
