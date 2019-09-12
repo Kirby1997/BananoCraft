@@ -2,14 +2,16 @@ package banano.bananominecraft.helloworld;
 
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
+import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.entity.Player;
 
 import java.util.List;
 
 public class VaultConnector implements Economy {
     @Override
     public boolean isEnabled() {
-        return false;
+        return banano.bananominecraft.helloworld.HelloWorld.getPlugin(HelloWorld.class).isEnabled();
     }
 
     @Override
@@ -29,7 +31,7 @@ public class VaultConnector implements Economy {
 
     @Override
     public String format(double amount) {
-        return null;
+        return String.valueOf(amount) + "Bans";
     }
 
     @Override
@@ -44,102 +46,140 @@ public class VaultConnector implements Economy {
 
     @Override
     public boolean hasAccount(String playerName) {
-        return false;
+
+        return DB.accountExists(playerName);
     }
 
     @Override
     public boolean hasAccount(OfflinePlayer player) {
-        return false;
+        String playerName = player.getName();
+        return DB.accountExists(playerName);
     }
 
     @Override
     public boolean hasAccount(String playerName, String worldName) {
-        return false;
+        return DB.accountExists(playerName);
     }
 
     @Override
     public boolean hasAccount(OfflinePlayer player, String worldName) {
-        return false;
+        String playerName = player.getName();
+        return DB.accountExists(playerName);
     }
 
     @Override
     public double getBalance(String playerName) {
-        return 0;
+        System.out.println("GET BALANCE???");
+        Player player = Bukkit.getServer().getPlayer(playerName);
+        Double balance = EconomyFuncs.getBalance(player);
+        System.out.println(balance);
+        return balance;
     }
 
     @Override
-    public double getBalance(OfflinePlayer player) {
+    public double getBalance(OfflinePlayer offlinePlayer) {
+        System.out.println("OFFLINE PLAYER???");
+
+
+        if (offlinePlayer.hasPlayedBefore()) {
+            String UUID = offlinePlayer.getUniqueId().toString();
+            Player player = Bukkit.getPlayer(UUID);
+            return EconomyFuncs.getBalance(player);
+        }
+
         return 0;
     }
 
     @Override
     public double getBalance(String playerName, String world) {
-        return 0;
+        System.out.println("WOOOOOOORLD");
+        return getBalance(playerName);
     }
 
     @Override
-    public double getBalance(OfflinePlayer player, String world) {
-        return 0;
+    public double getBalance(OfflinePlayer offlinePlayer, String world) {
+
+        return getBalance(offlinePlayer);
     }
 
     @Override
     public boolean has(String playerName, double amount) {
-        return false;
+        Player player = Bukkit.getServer().getPlayer(playerName);
+        return EconomyFuncs.getBalance(player) >= amount;
     }
 
     @Override
-    public boolean has(OfflinePlayer player, double amount) {
+    public boolean has(OfflinePlayer offlinePlayer, double amount) {
+        if (offlinePlayer.hasPlayedBefore()) {
+            String UUID = offlinePlayer.getUniqueId().toString();
+            Player player = Bukkit.getPlayer(UUID);
+            return EconomyFuncs.getBalance(player) >= amount;
+        }
         return false;
     }
 
     @Override
     public boolean has(String playerName, String worldName, double amount) {
-        return false;
+
+        return has(playerName, amount);
     }
 
     @Override
-    public boolean has(OfflinePlayer player, String worldName, double amount) {
-        return false;
+    public boolean has(OfflinePlayer offlinePlayer, String worldName, double amount) {
+        return has(offlinePlayer, amount);
     }
 
     @Override
     public EconomyResponse withdrawPlayer(String playerName, double amount) {
-        return null;
+        System.out.println("WITHDRAWING " + amount + " to " + playerName);
+        Player player = Bukkit.getServer().getPlayer(playerName);
+        return new EconomyResponse(amount, EconomyFuncs.getBalance(player) - amount,EconomyFuncs.removeBalanceFP(player, amount) ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
     }
 
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer player, double amount) {
-        return null;
+
+        String playerName = player.getName();
+        return withdrawPlayer(playerName, amount);
     }
 
     @Override
     public EconomyResponse withdrawPlayer(String playerName, String worldName, double amount) {
-        return null;
+
+        return withdrawPlayer(playerName, amount);
     }
 
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer player, String worldName, double amount) {
-        return null;
+        String playerName = player.getName();
+        return withdrawPlayer(playerName, amount);
     }
 
     @Override
     public EconomyResponse depositPlayer(String playerName, double amount) {
-        return null;
+        System.out.println("DEPOSITING " + amount + " to " + playerName);
+        String masterWallet = EconomyFuncs.getMasterWallet();
+        System.out.println(masterWallet);
+        Player player = Bukkit.getServer().getPlayer(playerName);
+        return new EconomyResponse(amount, RPC.getBalance(masterWallet) - amount,EconomyFuncs.addBalanceTP(player, amount) ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
     }
 
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer player, double amount) {
-        return null;
+        String playerName = player.getName();
+        return depositPlayer(playerName, amount);
     }
 
     @Override
     public EconomyResponse depositPlayer(String playerName, String worldName, double amount) {
-        return null;
+
+        return depositPlayer(playerName, amount);
     }
 
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer player, String worldName, double amount) {
-        return null;
+        String playerName = player.getName();
+        return depositPlayer(playerName, amount);
     }
 
     @Override

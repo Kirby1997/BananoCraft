@@ -14,14 +14,13 @@ import java.net.URL;
 
 
 public class RPC{
+//private Plugin plugin = banano.bananominecraft.HelloWorld.getPlugin(HelloWorld.class);
 
-    Plugin plugin = HelloWorld.getPlugin();
-    String walletID = "8F0A6F3CBFE07C05F2867E5D713BD050BAF8AC16457C4CFA57A709F5DB440678";
+    public static String sendPost(String payload) throws Exception {
+        Plugin plugin = banano.bananominecraft.helloworld.HelloWorld.getPlugin(HelloWorld.class);
+        URL url = new URL(plugin.getConfig().getString("IP"));
 
-    public String sendPost(String payload) throws Exception {
-        //String nodeURL = plugin.getConfig().getString("IP"); WHY DOESN'T THIS WORK, KODY??
 
-        URL url = new URL ("http://127.0.0.1:7072");
         HttpURLConnection con = (HttpURLConnection)url.openConnection();
         con.setRequestMethod("POST");
         con.setRequestProperty("Content-Type", "application/json; utf-8");
@@ -35,23 +34,19 @@ public class RPC{
         try(BufferedReader br = new BufferedReader(
                 new InputStreamReader(con.getInputStream(), "utf-8"))) {
 
-            String responseLine = null;
+            String responseLine;
             while ((responseLine = br.readLine()) != null) {
                 response.append(responseLine.trim());
             }
-            System.out.println(response.toString());
-
         }
-
-        System.out.println(response.toString());
         return response.toString();
     }
 
-    public String accountCreate(){
+    public static String accountCreate(){
+
+        String payload = "{\"action\": \"account_create\"," +
+                "\"wallet\": \"" + getWalletID() + "\"}";
         try{
-            String payload = "{\"action\": \"account_create\"," +
-                    "\"wallet\": \"" + walletID + "\"}";
-            //System.out.println(payload);
 
             String accountResponse = sendPost(payload);
             JsonElement accountJson = new JsonParser().parse(accountResponse);
@@ -60,36 +55,36 @@ public class RPC{
             return account;
         }
         catch (Exception e){
+            System.out.println(payload);
             e.printStackTrace();
         }
         return "Account Creation Failed";
     }
 
-    public BigInteger toRaw(int value){
+    private static BigInteger toRaw(int value){
 
         Double draw = value * Math.pow(10,29);
-        BigInteger raw = BigDecimal.valueOf(draw).toBigInteger();
 
-        return raw;
+
+        return BigDecimal.valueOf(draw).toBigInteger();
     }
 
-    public int fromRaw(BigInteger bigInteger){
+    private static Double fromRaw(BigInteger bigInteger){
         Double draw = bigInteger.doubleValue();
         double value = draw / Math.pow(10,29);
 
-        return (int)value;
+        return value;
 
     }
 
-    public String sendTransaction(String sender, String recipient, int value){
-        try{
-            String payload = "{\"action\": \"send\"," +
-                    "\"wallet\": \"" + walletID + "\"," +
-                    "\"source\": \"" + sender + "\"," +
-                    "\"destination\": \"" + recipient + "\"," +
-                    "\"amount\": \"" + toRaw(value) + "\"}";
+    public static String sendTransaction(String sender, String recipient, int value){
+        String payload = "{\"action\": \"send\"," +
+                "\"wallet\": \"" + getWalletID() + "\"," +
+                "\"source\": \"" + sender + "\"," +
+                "\"destination\": \"" + recipient + "\"," +
+                "\"amount\": \"" + toRaw(value) + "\"}";
 
-            System.out.println(payload);
+        try{
             String sendResponse = sendPost(payload);
             JsonElement accountJson = new JsonParser().parse(sendResponse);
             String blockHash = accountJson.getAsJsonObject().get("block").getAsString();
@@ -98,28 +93,43 @@ public class RPC{
             return blockHash;
         }
         catch (Exception e){
+            System.out.println(payload);
             e.printStackTrace();
         }
         return "Transaction send failed";
     }
 
-    public int getBalance(String account){
-        try{
-            String payload = "{\"action\": \"account_info\"," +
-                    "\"account\": \"" + account + "\"}";
+    public static Double getBalance(String account){
 
-            System.out.println(payload);
+        String payload = "{\"action\": \"account_info\"," +
+                "\"account\": \"" + account + "\"}";
+        try{
+
             String sendResponse = sendPost(payload);
             JsonElement accountJson = new JsonParser().parse(sendResponse);
-            BigInteger bigInteger = accountJson.getAsJsonObject().get("balance").getAsBigInteger();
-            System.out.println(bigInteger);
-            int response = fromRaw(bigInteger);
-            return response;
+            try{
+                BigInteger bigInteger = accountJson.getAsJsonObject().get("balance").getAsBigInteger();
+                System.out.println("Balance: " + bigInteger);
+                return fromRaw(bigInteger);
+            }
+            catch(Exception e){
+                String error = accountJson.getAsJsonObject().get("error").toString();
+                if (error.equals("Account not found")){
+                return 0.0;
+                }
+
+            }
+
         }
         catch (Exception e){
+            System.out.println(payload);
             e.printStackTrace();
         }
-        return 0;
+        return 0.0;
 
+    }
+
+    private static String getWalletID(){
+        return "INSERT WALLET ID HERE";
     }
 }

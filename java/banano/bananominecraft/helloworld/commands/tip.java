@@ -15,7 +15,7 @@ import org.bukkit.entity.Player;
 public class tip implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        RPC rpc = new RPC();
+
         if(sender instanceof Player){
         Player player = (Player) sender;
             if(args.length == 2){
@@ -28,10 +28,10 @@ public class tip implements CommandExecutor {
                     player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
                     String sUUID = player.getUniqueId().toString();
                     String sWallet = DB.getWallet(sUUID);
-                    if(rpc.getBalance(sWallet) >= amount) {
+                    if(RPC.getBalance(sWallet) >= amount) {
                         String tUUID = target.getUniqueId().toString();
                         String tWallet = DB.getWallet(tUUID);
-                        String blockHash = rpc.sendTransaction(sWallet, tWallet, amount);
+                        String blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
                         String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
 
                         TextComponent blocklink = new TextComponent( "Click me to view the transaction in the block explorer" );

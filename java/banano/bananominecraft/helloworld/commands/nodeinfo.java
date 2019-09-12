@@ -1,5 +1,6 @@
 package banano.bananominecraft.helloworld.commands;
 
+import banano.bananominecraft.helloworld.EconomyFuncs;
 import banano.bananominecraft.helloworld.RPC;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -7,25 +8,49 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 public class nodeinfo implements CommandExecutor {
-    RPC rpc = new RPC();
+
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        String url = "http://127.0.0.1:7072";
-        Player player = (Player) sender;
+        String url = "INSERT NODE IP HERE";
+
         //String nodeIP = getConfig().getString("IP");
-        player.sendMessage("The node IP is: " + url);
-        String response;
         try{
             String payload = "{\"action\": \"block_count\"}";
-            response = rpc.sendPost(payload);
-            player.sendMessage(response);
-            System.out.println("Response\n\n\n" + response);
+            String response = RPC.sendPost(payload);
+
+
+
+
+            if(sender instanceof Player){
+                Player player = (Player) sender;
+                //player.sendMessage("The node IP is: " + url);
+                player.sendMessage(response);
+                player.sendMessage("The server wallet is " + EconomyFuncs.getMasterWallet());
+                player.sendMessage("It currently contains: " + RPC.getBalance(EconomyFuncs.getMasterWallet()));
+            }
+            else {
+                System.out.println("The node IP is: " + url);
+                System.out.println("Response: " + response);
+                System.out.println("The server wallet is " + EconomyFuncs.getMasterWallet());
+                System.out.println("It currently contains: " + RPC.getBalance(EconomyFuncs.getMasterWallet()));
+            }
         }
         catch (Exception e){
-            response = "bob";
-            player.sendMessage(response);
+            String response = "bob";
+            System.out.println(response);
             e.printStackTrace();
         }
+
+
+
+
+
+
+
+
+
         return false;
+
+
     }
 }

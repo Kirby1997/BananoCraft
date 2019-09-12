@@ -26,8 +26,7 @@ public class withdraw implements CommandExecutor {
                 String amountStr = Integer.toString(amount);
                 if (args.length == 2) {
                     String withdrawAddr = args[1];
-                    RPC rpc = new RPC();
-                    String blockHash = rpc.sendTransaction(playerWallet,withdrawAddr,amount);
+                    String blockHash = RPC.sendTransaction(playerWallet,withdrawAddr,amount);
                     player.sendMessage(blockHash);
                     System.out.println(blockHash);
                     String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
@@ -43,6 +42,7 @@ public class withdraw implements CommandExecutor {
                 }
             } catch (Exception e)
             {
+                player.sendMessage("Please make sure you entered a valid amount and a valid address");
                 e.printStackTrace();
             }
 

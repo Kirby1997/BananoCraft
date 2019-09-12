@@ -1,7 +1,6 @@
 package banano.bananominecraft.helloworld.events;
 
-import banano.bananominecraft.helloworld.DB;
-import banano.bananominecraft.helloworld.RPC;
+import banano.bananominecraft.helloworld.EconomyFuncs;
 import com.mongodb.Block;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -35,22 +34,12 @@ public class OnJoin implements Listener {
         welcomeMessage.addExtra(nameMessage);
         player.spigot().sendMessage(welcomeMessage);
 
+        player.sendMessage("/balance to see balance");
+        player.sendMessage("/deposit to see your address");
+        player.sendMessage("/withdraw <amount> <address> to withdraw your bans");
 
-        accountCreate(player);
+        EconomyFuncs.accountCreate(player);
     }
 
-    private void accountCreate(Player player){
-        String UUID = player.getUniqueId().toString();
-        try {
 
-            if (!DB.accountExists(UUID)) {
-                RPC rpc = new RPC();
-                String wallet =  rpc.accountCreate();
-                DB.storeAccount(player, wallet);
-            }
-        }
-        catch (Exception e){
-            e.printStackTrace();
-        }
-    }
 }

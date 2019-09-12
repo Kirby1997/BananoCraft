@@ -11,10 +11,9 @@ import org.bukkit.entity.Player;
 import static com.mongodb.client.model.Filters.eq;
 
 public class DB {
+    //Plugin plugin = banano.bananominecraft.helloworld.HelloWorld.getPlugin(HelloWorld.class);
 
-
-    private static MongoClient mongoClient = MongoClients.create("MONGODB URI");
-
+    private static MongoClient mongoClient = MongoClients.create("INSERT MONGODB URI HERE");
 
 
     public static MongoClient getMongoClient(){ return mongoClient;
@@ -24,18 +23,25 @@ public class DB {
     public static String getWallet(String UUID){
 
         MongoCollection<Document> collection = mongoClient.getDatabase("BananoCraft").getCollection("users");
-        collection.createIndex(Indexes.text("UUID"));
-        Document wallet = collection.find(eq("UUID", UUID)).first();
-        System.out.println(wallet.toJson());
-        System.out.println(wallet.getString("Wallet"));
+        collection.createIndex(Indexes.text("user"));
+        try{
+            Document wallet = collection.find(eq("UUID", UUID)).first();
 
-        return wallet.getString("Wallet");
+
+            return wallet.getString("Wallet");}
+
+        catch (Exception e){
+            e.printStackTrace();
+        }
+
+    return "SOMETHING BORKED";
+
     }
 
 
     public static void storeAccount(Player player, String account){
         MongoCollection<Document> collection = mongoClient.getDatabase("BananoCraft").getCollection("users");
-        collection.createIndex(Indexes.text("UUID"));
+        collection.createIndex(Indexes.text("user"));
         String UUID = player.getUniqueId().toString();
 
         Document document1 = new Document("name", player.getName())
@@ -47,10 +53,12 @@ public class DB {
 
     public static boolean accountExists(String UUID){
         MongoCollection<Document> collection = mongoClient.getDatabase("BananoCraft").getCollection("users");
-        collection.createIndex(Indexes.text("UUID"));
+        collection.createIndex(Indexes.text("user"));
+        System.out.println("COLLECTION" + collection);
         long matchCount = collection.countDocuments(Filters.text(UUID));
-        if(matchCount > 0){
-            System.out.println("Text search matches: " + matchCount);
+        Document result = collection.find(eq("UUID", UUID)).first();
+        if(result != null){
+            System.out.println(UUID + " has the wallet: " + result.getString("Wallet"));
             return true;
         }
         else{

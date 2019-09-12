@@ -4,6 +4,7 @@ main: banano.bananominecraft.helloworld.HelloWorld
 api-version: 1.13
 authors: [Kirby]
 description: Hello World
+depend: [Vault]
 commands:
   poop:
     description: Yucky.
