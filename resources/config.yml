@@ -1,3 +1,7 @@
 IP: "INSERT NODE IP HERE"
-walletID: "INSERT WALLETID FROM NODE HERE"
+walletSeed: "INSERT WALLET SEED HERE"
+# Don't touch walletID unless you know what you're doing
+walletID: "INSERT WALLET ID FROM NODE HERE"
+# Don't touch masterWallet unless you know what you're doing
+masterWallet: "INSERT MASTER WALLET HERE"
 mongoURI: "INSERT MONGOURI HERE"

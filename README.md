@@ -22,7 +22,7 @@ Put the IP of your node in line 14 of nodeinfo.java
 Create an account in the banano wallet and paste the address into line 86 of EconomyFuncs.java (this is your master wallet)  
   
  Now compile the plugin, place it in your server's "plugin folder", run your server and then shut it down again.  
- Go into the newly created "HelloWorld" folder and edit the config.yml.
+ Go into the newly created "BananoEconomy" folder and edit the config.yml.
  Extraction of parameters was in process. Put the following lines in the file and replace the text were indicated.  
  IP: "INSERT NODE IP HERE"  
  walletID: "INSERT WALLET ID HERE"

@@ -1,11 +1,13 @@
-package banano.bananominecraft.helloworld.commands;
+package banano.bananominecraft.bananoeconomy.commands;
 
-import banano.bananominecraft.helloworld.EconomyFuncs;
+import banano.bananominecraft.bananoeconomy.EconomyFuncs;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+
+import java.text.DecimalFormat;
 
 public class balance implements CommandExecutor {
     @Override
@@ -16,7 +18,8 @@ public class balance implements CommandExecutor {
             Player player = (Player) sender;
 
             Double balance = EconomyFuncs.getBalance(player);
-            player.sendMessage(ChatColor.YELLOW + "Your current balance is: " + balance);
+            DecimalFormat df = new DecimalFormat("#.#####");
+            player.sendMessage(ChatColor.YELLOW + "Your current balance is: " + df.format(balance));
 
         } else {
             System.out.println("You need to be a player");

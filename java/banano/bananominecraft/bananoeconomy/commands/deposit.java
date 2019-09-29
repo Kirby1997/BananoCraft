@@ -1,6 +1,6 @@
-package banano.bananominecraft.helloworld.commands;
+package banano.bananominecraft.bananoeconomy.commands;
 
-import banano.bananominecraft.helloworld.DB;
+import banano.bananominecraft.bananoeconomy.DB;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.TextComponent;

@@ -1,4 +1,4 @@
-package banano.bananominecraft.helloworld;
+package banano.bananominecraft.bananoeconomy;
 
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
@@ -11,7 +11,7 @@ import java.util.List;
 public class VaultConnector implements Economy {
     @Override
     public boolean isEnabled() {
-        return banano.bananominecraft.helloworld.HelloWorld.getPlugin(HelloWorld.class).isEnabled();
+        return Main.getPlugin(Main.class).isEnabled();
     }
 
     @Override
@@ -158,7 +158,7 @@ public class VaultConnector implements Economy {
     @Override
     public EconomyResponse depositPlayer(String playerName, double amount) {
         System.out.println("DEPOSITING " + amount + " to " + playerName);
-        String masterWallet = EconomyFuncs.getMasterWallet();
+        String masterWallet = RPC.getMasterWallet();
         System.out.println(masterWallet);
         Player player = Bukkit.getServer().getPlayer(playerName);
         return new EconomyResponse(amount, RPC.getBalance(masterWallet) - amount,EconomyFuncs.addBalanceTP(player, amount) ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");

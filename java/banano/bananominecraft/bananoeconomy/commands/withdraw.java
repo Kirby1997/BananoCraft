@@ -1,7 +1,7 @@
-package banano.bananominecraft.helloworld.commands;
+package banano.bananominecraft.bananoeconomy.commands;
 
-import banano.bananominecraft.helloworld.DB;
-import banano.bananominecraft.helloworld.RPC;
+import banano.bananominecraft.bananoeconomy.DB;
+import banano.bananominecraft.bananoeconomy.RPC;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
@@ -22,8 +22,8 @@ public class withdraw implements CommandExecutor {
             String UUID = player.getUniqueId().toString();
             String playerWallet = DB.getWallet(UUID);
             try {
-                int amount = Integer.parseInt(args[0]);
-                String amountStr = Integer.toString(amount);
+                double amount = Double.parseDouble(args[0]);
+                String amountStr = Double.toString(amount);
                 if (args.length == 2) {
                     String withdrawAddr = args[1];
                     String blockHash = RPC.sendTransaction(playerWallet,withdrawAddr,amount);
@@ -42,7 +42,7 @@ public class withdraw implements CommandExecutor {
                 }
             } catch (Exception e)
             {
-                player.sendMessage("Please make sure you entered a valid amount and a valid address");
+                player.sendMessage("Wrong formatting. /withdraw <amount> <address>");
                 e.printStackTrace();
             }
 

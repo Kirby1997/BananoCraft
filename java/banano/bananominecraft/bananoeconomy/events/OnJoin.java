@@ -1,6 +1,6 @@
-package banano.bananominecraft.helloworld.events;
+package banano.bananominecraft.bananoeconomy.events;
 
-import banano.bananominecraft.helloworld.EconomyFuncs;
+import banano.bananominecraft.bananoeconomy.EconomyFuncs;
 import com.mongodb.Block;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -37,6 +37,7 @@ public class OnJoin implements Listener {
         player.sendMessage("/balance to see balance");
         player.sendMessage("/deposit to see your address");
         player.sendMessage("/withdraw <amount> <address> to withdraw your bans");
+        player.sendMessage("/tip [amount] [playername]");
 
         EconomyFuncs.accountCreate(player);
     }

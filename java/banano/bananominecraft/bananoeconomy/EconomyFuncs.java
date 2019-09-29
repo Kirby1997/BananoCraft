@@ -1,4 +1,4 @@
-package banano.bananominecraft.helloworld;
+package banano.bananominecraft.bananoeconomy;
 
 import org.bukkit.entity.Player;
 
@@ -23,7 +23,7 @@ public class EconomyFuncs {
 
             if (!DB.accountExists(UUID)) {
                 System.out.println(DB.accountExists(UUID));
-                String wallet =  RPC.accountCreate();
+                String wallet =  RPC.accountCreate(-1);
                 DB.storeAccount(player, wallet);
                 System.out.println("Created new wallet for " + playerName);
             }
@@ -45,7 +45,7 @@ public class EconomyFuncs {
 
         try{
             String sender = DB.getWallet(UUID);
-            String block = RPC.sendTransaction(sender,EconomyFuncs.getMasterWallet(),(int)amount);
+            String block = RPC.sendTransaction(sender,RPC.getMasterWallet(),amount);
             System.out.println(block);
             return true;
         }
@@ -59,7 +59,7 @@ public class EconomyFuncs {
 
     public static boolean addBalanceTP(Player player, double amount){
         // MASTER WALLET TO PLAYER
-        String sender = getMasterWallet();
+        String sender = RPC.getMasterWallet();
         String UUID = player.getUniqueId().toString();
         double serverBalance = RPC.getBalance(sender);
         System.out.println("Server balance: " + serverBalance);
@@ -68,7 +68,7 @@ public class EconomyFuncs {
         try{
             String playerWallet = DB.getWallet(UUID);
             System.out.println("Player wallet: " + playerWallet);
-            String block = RPC.sendTransaction(sender,playerWallet,(int)amount);
+            String block = RPC.sendTransaction(sender,playerWallet,amount);
             System.out.println(block);
             return true;
         }
@@ -81,9 +81,5 @@ public class EconomyFuncs {
     }
 
 
-    public static String getMasterWallet(){
 
-        return "ACCOUNT NUMBER 0 OF WALLET";
-
-    }
 }

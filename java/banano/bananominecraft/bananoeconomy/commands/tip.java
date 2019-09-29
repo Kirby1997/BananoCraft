@@ -1,7 +1,7 @@
-package banano.bananominecraft.helloworld.commands;
+package banano.bananominecraft.bananoeconomy.commands;
 
-import banano.bananominecraft.helloworld.DB;
-import banano.bananominecraft.helloworld.RPC;
+import banano.bananominecraft.bananoeconomy.DB;
+import banano.bananominecraft.bananoeconomy.RPC;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
@@ -24,7 +24,7 @@ public class tip implements CommandExecutor {
                     player.sendMessage("You cannot tip yourself");
                 }
                 else if(target instanceof Player){
-                    int amount = Integer.parseInt(args[0]);
+                    double amount = Double.parseDouble(args[0]);
                     player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
                     String sUUID = player.getUniqueId().toString();
                     String sWallet = DB.getWallet(sUUID);
@@ -38,7 +38,7 @@ public class tip implements CommandExecutor {
                         blocklink.setClickEvent( new ClickEvent( ClickEvent.Action.OPEN_URL, blockURL ) );
                         blocklink.setUnderlined(true);
 
-                        String amountstr = Integer.toString(amount);
+                        String amountstr = Double.toString(amount);
                         player.spigot().sendMessage(( new ComponentBuilder( "You have sent " ).color( ChatColor.YELLOW ).append( amountstr ).color( ChatColor.WHITE ).bold(true).append( " to " ).color( ChatColor.YELLOW )
                                 .append(target.getDisplayName()).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
                         player.spigot().sendMessage(blocklink);
