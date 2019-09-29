@@ -23,6 +23,10 @@ public class withdraw implements CommandExecutor {
             String playerWallet = DB.getWallet(UUID);
             try {
                 double amount = Double.parseDouble(args[0]);
+                if(amount <= 0){
+                    player.sendMessage("Amount has to be greater than 0");
+                    return false;
+                }
                 String amountStr = Double.toString(amount);
                 if (args.length == 2) {
                     String withdrawAddr = args[1];

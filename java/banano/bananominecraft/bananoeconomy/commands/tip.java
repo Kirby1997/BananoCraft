@@ -25,10 +25,14 @@ public class tip implements CommandExecutor {
                 }
                 else if(target instanceof Player){
                     double amount = Double.parseDouble(args[0]);
+                    if(amount <= 0){
+                        player.sendMessage("Amount has to be greater than 0");
+                        return false;
+                    }
                     player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
                     String sUUID = player.getUniqueId().toString();
                     String sWallet = DB.getWallet(sUUID);
-                    if(RPC.getBalance(sWallet) >= amount) {
+                    if(RPC.getBalance(sWallet) >= amount && amount > 0) {
                         String tUUID = target.getUniqueId().toString();
                         String tWallet = DB.getWallet(tUUID);
                         String blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
