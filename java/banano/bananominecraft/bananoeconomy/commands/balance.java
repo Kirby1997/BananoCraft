@@ -18,7 +18,7 @@ public class balance implements CommandExecutor {
             Player player = (Player) sender;
 
             Double balance = EconomyFuncs.getBalance(player);
-            DecimalFormat df = new DecimalFormat("#.#####");
+            DecimalFormat df = new DecimalFormat("#.##");
             player.sendMessage(ChatColor.YELLOW + "Your current balance is: " + df.format(balance));
 
         } else {

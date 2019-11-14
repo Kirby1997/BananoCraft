@@ -106,7 +106,6 @@ public class RPC{
             String sendResponse = sendPost(payload);
             JsonElement accountJson = new JsonParser().parse(sendResponse);
             String blockHash = accountJson.getAsJsonObject().get("block").getAsString();
-            System.out.println(blockHash);
 
             return blockHash;
         }
@@ -127,7 +126,6 @@ public class RPC{
             JsonElement accountJson = new JsonParser().parse(balanceResponse);
             try{
                 BigDecimal bigDecimal = accountJson.getAsJsonObject().get("balance").getAsBigDecimal();
-                System.out.println("Balance: " + bigDecimal);
                 return fromRaw(bigDecimal);
             }
             catch(Exception e){
@@ -157,6 +155,7 @@ public class RPC{
             return Arrays.asList(checked, unchecked);
         }
         catch (Exception e){
+            System.out.println(payload);
             System.out.println(e);
         }
         return Arrays.asList("Null", "Null");
@@ -167,10 +166,8 @@ public class RPC{
 
         String payload = "{\"action\": \"wallet_balances\"," +
                 "\"wallet\": \"" + walletID + "\"}";
-        System.out.println(payload);
         try {
             JsonElement existsJson = new JsonParser().parse(sendPost(payload));
-            System.out.println(existsJson);
             try{
                 String exists = existsJson.getAsJsonObject().get("error").getAsString();
                 if (exists.equals("Wallet not found") || exists.equals("Bad wallet number")){
@@ -183,11 +180,13 @@ public class RPC{
             }
             catch (Exception e){
                 System.out.println(e);
+                System.out.println(payload);
             }
 
         }
         catch (Exception e){
             System.out.println(e);
+            System.out.println(payload);
         }
         return true;
     }

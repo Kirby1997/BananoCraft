@@ -66,11 +66,11 @@ public class DB {
     public static boolean accountExists(String UUID){
         MongoCollection<Document> collection = getMongoClient().getDatabase("BananoCraft").getCollection("users");
         collection.createIndex(Indexes.text("user"));
-        System.out.println("COLLECTION" + collection);
+
         long matchCount = collection.countDocuments(Filters.text(UUID));
         Document result = collection.find(eq("UUID", UUID)).first();
         if(result != null){
-            System.out.println(UUID + " has the wallet: " + result.getString("Wallet"));
+
             return true;
         }
         else{

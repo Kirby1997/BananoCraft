@@ -32,7 +32,7 @@ public class withdraw implements CommandExecutor {
                     String withdrawAddr = args[1];
                     String blockHash = RPC.sendTransaction(playerWallet,withdrawAddr,amount);
                     player.sendMessage(blockHash);
-                    System.out.println(blockHash);
+
                     String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
 
                     player.spigot().sendMessage(( new ComponentBuilder( "You have sent " ).color( ChatColor.YELLOW ).append( amountStr ).color( ChatColor.WHITE ).bold(true).append( " to " ).color( ChatColor.YELLOW )

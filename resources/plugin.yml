@@ -28,3 +28,10 @@ commands:
     description: Displays your balance
     aliases: [bal]
 
+permissions:
+  BananoEconomy.nodeinfo.ip:
+      description: This permission allows users to see the node IP with the nodeinfo command
+      default: op
+  BananoEconomy.nodeinfo:
+      description: This permission allows
+

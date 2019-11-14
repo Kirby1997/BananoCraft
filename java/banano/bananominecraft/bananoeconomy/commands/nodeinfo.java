@@ -36,8 +36,6 @@ public class nodeinfo implements CommandExecutor {
             }
         }
         catch (Exception e){
-            String response = "bob";
-            System.out.println(response);
             e.printStackTrace();
         }
 

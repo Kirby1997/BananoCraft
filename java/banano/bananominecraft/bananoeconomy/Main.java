@@ -28,13 +28,6 @@ public final class Main extends JavaPlugin implements Listener {
         System.out.println("STARTED");
         getServer().getPluginManager().registerEvents(new OnJoin(), this);
 
-        try{
-            String payload = "{\"action\": \"block_count\"}";
-            RPC.sendPost(payload);}
-        catch (Exception e){
-            e.printStackTrace();
-        }
-
         getCommand("deposit").setExecutor(new deposit());
         getCommand("nodeinfo").setExecutor(new nodeinfo());
         getCommand("tip").setExecutor(new tip());
@@ -67,17 +60,18 @@ public final class Main extends JavaPlugin implements Listener {
     }
 
     private void setupWallet(){
-        System.out.println("SETTING UP WALLET");
+
         if(!RPC.wallet_exists()){
+            System.out.println("MASTER WALLET DOES NOT EXIST -SETTING UP WALLET");
             RPC.walletCreate();
             String masterWallet = RPC.accountCreate(0);
             System.out.println("MASTER WALLET: " + masterWallet);
             Main.getPlugin(Main.class).getConfig().set("masterWallet", masterWallet);
             Main.getPlugin(Main.class).saveConfig();
-            System.out.println("SAVED");
+
         }
         else {
-            System.out.println("Wallet exits??");
+            System.out.println("Master wallet exists.");
         }
     }
 }
