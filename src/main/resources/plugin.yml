@@ -2,36 +2,21 @@ name: BananoEconomy
 version: ${project.version}
 main: banano.bananominecraft.bananoeconomy.Main
 api-version: 1.13
-authors: [Kirby]
-description: Hello World
+authors: [Kirby, ez]
+description: good
 depend: [Vault]
+loadbefore: [BountyHunters, CMI, AuctionHouse, DiscordSRV, LuckPerms]
 commands:
-  poop:
-    description: Yucky.
-    aliases: [poo]
-
   nodeinfo:
     description: Prints node info
     aliases: [node]
-
   deposit:
     aliases: [dep]
     description: Displays your deposit address
-
   tip:
     description: Send a tip to another player
-
   withdraw:
     description: Withdraw bans to an address
-
   balance:
     description: Displays your balance
     aliases: [bal]
-
-permissions:
-  BananoEconomy.nodeinfo.ip:
-      description: This permission allows users to see the node IP with the nodeinfo command
-      default: op
-  BananoEconomy.nodeinfo:
-      description: This permission allows
-
