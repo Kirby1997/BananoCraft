@@ -1,6 +1,6 @@
 # BananoCraft
 
-Join our server and test it out, address: `banano.party`, any minecraft java edition version from 1.4.7 to 1.15
+Join our server and test it out, address: `banano.party` Both Minecraft Java & Bedrock edition
 
 This plugin works perfectly for implementing [Banano](https://banano.cc) to your Spigot Minecraft 1.15 server.
 
@@ -16,9 +16,9 @@ Run your server once with the plugin installed then shut down the server & finis
 ## Database Setup  
 Fire up a free database at [mongodb.com](https://mongodb.com) (or host your own)  
 
-Create a database called "BananoCraft"  
+Create a database called `BananoCraft`  
 
-Create a collection in the database called "users"   
+Create a collection in the database called `users`   
 
 Find your database connection URI and put it in the `BananoEconomy/config.yml` file.  
 
