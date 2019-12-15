@@ -1,8 +1,8 @@
 # BananoCraft
 
-Join our server and test it out, address: `banano.party`, any minecraft java edition version from 1.4.7 to 1.14.4
+Join our server and test it out, address: `banano.party`, any minecraft java edition version from 1.4.7 to 1.15
 
-This plugin works perfectly for implementing [Banano](https://banano.cc) to your Spigot Minecraft 1.14.4 server.
+This plugin works perfectly for implementing [Banano](https://banano.cc) to your Spigot Minecraft 1.15 server.
 
 Requires [Vault](https://www.spigotmc.org/resources/vault.34315/) & it's recommended hosting a [Banano Node](https://github.com/BananoCoin/banano/wiki/Building-a-Bananode-from-sources)
 
@@ -33,4 +33,5 @@ Get a Banano wallet seed from [vault.banano.cc](https://vault.banano.cc) and pas
 Send Banano donations to Kirby: `ban_1kirby19w89i35yenyesnz7zqdyguzdb3e819dxrhdegdnsaphzeug39ntxj`  
 
 Send Litcoin donations to ez: `lit_3rsye7goqc9rqzz4igi4t6bdahoznye9dctjkuprobixnhkntxx387d4999z`
+
 For support, spam `Kirby#8061` on Discord
