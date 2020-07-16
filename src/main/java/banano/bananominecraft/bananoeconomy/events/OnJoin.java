@@ -45,8 +45,6 @@ public class OnJoin implements Listener {
         System.out.println("create account for player");
         EconomyFuncs.accountCreate(player);
 
-        player.addAttachment(Main.getPlugin(Main.class));
-     //   if DB.isFrozen(player)
     }
 
 
