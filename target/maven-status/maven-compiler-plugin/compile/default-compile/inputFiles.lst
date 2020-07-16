@@ -1,11 +1,13 @@
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\EconomyFuncs.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\deposit.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\tip.java
-D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\events\OnJoin.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\nodeinfo.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\RPC.java
-D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\DB.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\VaultConnector.java
+D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\events\OnJoin.java
+D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\Freeze.java
+D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\DB.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\Main.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\withdraw.java
+D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\UnFreeze.java
 D:\Libraries\Documents\Projects\BananoCraft\src\main\java\banano\bananominecraft\bananoeconomy\commands\balance.java

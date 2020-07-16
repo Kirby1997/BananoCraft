@@ -155,7 +155,6 @@ public class RPC{
             return Arrays.asList(checked, unchecked);
         }
         catch (Exception e){
-            System.out.println(payload);
             System.out.println(e);
         }
         return Arrays.asList("Null", "Null");
@@ -175,18 +174,15 @@ public class RPC{
                 }
                 else {
                     System.out.println(payload);
-                    System.out.println(existsJson);
                 }
             }
             catch (Exception e){
-                System.out.println(e);
-                System.out.println(payload);
+                System.out.println("Master wallet found!");
             }
 
         }
         catch (Exception e){
-            System.out.println(e);
-            System.out.println(payload);
+            System.out.println("Master wallet found!");
         }
         return true;
     }

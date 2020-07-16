@@ -39,14 +39,6 @@ public class nodeinfo implements CommandExecutor {
             e.printStackTrace();
         }
 
-
-
-
-
-
-
-
-
         return false;
 
 

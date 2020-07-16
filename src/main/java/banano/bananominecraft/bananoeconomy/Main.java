@@ -10,17 +10,24 @@ import org.bukkit.event.Listener;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.permissions.PermissionAttachment;
+
+import java.util.HashMap;
+import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 
 public final class Main extends JavaPlugin implements Listener {
     private static Main instance;
     public static Economy economy = null;
-
+    public Logger log = Bukkit.getLogger();
     private Plugin plugin;
-
+    private HashMap<UUID, PermissionAttachment> playerPermissions;
 
     @Override
     public void onEnable() {
+
         // Plugin startup logic
         instance = this;
         getConfig().options().copyDefaults();
@@ -33,22 +40,24 @@ public final class Main extends JavaPlugin implements Listener {
         getCommand("tip").setExecutor(new tip());
         getCommand("withdraw").setExecutor(new withdraw());
         getCommand("balance").setExecutor(new balance());
+        getCommand("freeze").setExecutor(new Freeze());
+        getCommand("unfreeze").setExecutor(new UnFreeze());
 
+        System.out.println("registered commands");
         setupEconomy();
+        System.out.println("economy setup");
         setupWallet();
-
+        System.out.println("wallet setup");
     }
+
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-
         return super.onCommand(sender, command, label, args);
     }
 
-
     public void onDisable() {
         DB.getMongoClient().close();
-
     }
 
     private boolean setupEconomy()
@@ -56,11 +65,12 @@ public final class Main extends JavaPlugin implements Listener {
         if (Bukkit.getServer().getPluginManager().getPlugin("Vault") != null) {
             Bukkit.getServer().getServicesManager().register(Economy.class, new VaultConnector(), this, ServicePriority.Highest);
         }
+        System.out.println("return economy setup");
         return (economy != null);
     }
 
     private void setupWallet(){
-
+        System.out.println(RPC.wallet_exists());
         if(!RPC.wallet_exists()){
             System.out.println("MASTER WALLET DOES NOT EXIST -SETTING UP WALLET");
             RPC.walletCreate();

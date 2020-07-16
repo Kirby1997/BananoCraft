@@ -45,29 +45,32 @@ public class VaultConnector implements Economy {
     }
 
     @Override
+    @Deprecated
     public boolean hasAccount(String playerName) {
-
-        return DB.accountExists(playerName);
+        return false;
     }
 
     @Override
     public boolean hasAccount(OfflinePlayer player) {
-        String playerName = player.getName();
-        return DB.accountExists(playerName);
+        if (player.hasPlayedBefore()){
+            return DB.accountExists(player.getPlayer());
+        }
+        return false;
     }
 
     @Override
+    @Deprecated
     public boolean hasAccount(String playerName, String worldName) {
-        return DB.accountExists(playerName);
+        return false;
     }
 
     @Override
     public boolean hasAccount(OfflinePlayer player, String worldName) {
-        String playerName = player.getName();
-        return DB.accountExists(playerName);
+        return hasAccount(player);
     }
 
     @Override
+    @Deprecated
     public double getBalance(String playerName) {
         System.out.println(1);
         Player player = Bukkit.getServer().getPlayer(playerName);
@@ -79,11 +82,8 @@ public class VaultConnector implements Economy {
     @Override
     public double getBalance(OfflinePlayer offlinePlayer) {
 
-
-
         if (offlinePlayer.hasPlayedBefore()) {
-            String name = offlinePlayer.getName();
-            Player player = Bukkit.getPlayer(name);
+            Player player = offlinePlayer.getPlayer();
             return EconomyFuncs.getBalance(player);
         }
         System.out.println(2);
@@ -91,6 +91,7 @@ public class VaultConnector implements Economy {
     }
 
     @Override
+    @Deprecated
     public double getBalance(String playerName, String world) {
         System.out.println(3);
         return getBalance(playerName);
@@ -103,6 +104,7 @@ public class VaultConnector implements Economy {
     }
 
     @Override
+    @Deprecated
     public boolean has(String playerName, double amount) {
         Player player = Bukkit.getServer().getPlayer(playerName);
         return EconomyFuncs.getBalance(player) >= amount;
@@ -113,14 +115,14 @@ public class VaultConnector implements Economy {
         System.out.println(offlinePlayer);
         System.out.println(amount);
         if (offlinePlayer.hasPlayedBefore()) {
-            String name = offlinePlayer.getName();
-            Player player = Bukkit.getPlayer(name);
+            Player player = offlinePlayer.getPlayer();
             return EconomyFuncs.getBalance(player) >= amount;
         }
         return false;
     }
 
     @Override
+    @Deprecated
     public boolean has(String playerName, String worldName, double amount) {
 
         return has(playerName, amount);
@@ -132,32 +134,39 @@ public class VaultConnector implements Economy {
     }
 
     @Override
+    @Deprecated
     public EconomyResponse withdrawPlayer(String playerName, double amount) {
-
         Player player = Bukkit.getServer().getPlayer(playerName);
-        return new EconomyResponse(amount, EconomyFuncs.getBalance(player) - amount,EconomyFuncs.removeBalanceFP(player, amount) ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
+        return null;
     }
 
     @Override
-    public EconomyResponse withdrawPlayer(OfflinePlayer player, double amount) {
+    public EconomyResponse withdrawPlayer(OfflinePlayer offlinePlayer, double amount) {
 
-        String playerName = player.getName();
-        return withdrawPlayer(playerName, amount);
+        if (offlinePlayer.hasPlayedBefore()) {
+            Player player = offlinePlayer.getPlayer();
+            return new EconomyResponse(amount,
+                    EconomyFuncs.getBalance(player) - amount,EconomyFuncs.removeBalanceFP(player, amount)
+                    ? EconomyResponse.ResponseType.SUCCESS
+                    : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
+        }
+
+        return null;
     }
 
     @Override
+    @Deprecated
     public EconomyResponse withdrawPlayer(String playerName, String worldName, double amount) {
-
         return withdrawPlayer(playerName, amount);
     }
 
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer player, String worldName, double amount) {
-        String playerName = player.getName();
-        return withdrawPlayer(playerName, amount);
+        return withdrawPlayer(player,amount);
     }
 
     @Override
+    @Deprecated
     public EconomyResponse depositPlayer(String playerName, double amount) {
         System.out.println("DEPOSITING " + amount + " to " + playerName);
         String masterWallet = RPC.getMasterWallet();
@@ -166,12 +175,22 @@ public class VaultConnector implements Economy {
     }
 
     @Override
-    public EconomyResponse depositPlayer(OfflinePlayer player, double amount) {
-        String playerName = player.getName();
-        return depositPlayer(playerName, amount);
+    public EconomyResponse depositPlayer(OfflinePlayer offlinePlayer, double amount) {
+        if (offlinePlayer.hasPlayedBefore()) {
+            Player player = offlinePlayer.getPlayer();
+            System.out.println("DEPOSITING " + amount + " to " + player.getName());
+            String masterWallet = RPC.getMasterWallet();
+            return new EconomyResponse(amount,
+                    RPC.getBalance(masterWallet) - amount,EconomyFuncs.addBalanceTP(player, amount)
+                    ? EconomyResponse.ResponseType.SUCCESS
+                    : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
+        }
+
+        return null;
     }
 
     @Override
+    @Deprecated
     public EconomyResponse depositPlayer(String playerName, String worldName, double amount) {
 
         return depositPlayer(playerName, amount);
@@ -179,8 +198,7 @@ public class VaultConnector implements Economy {
 
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer player, String worldName, double amount) {
-        String playerName = player.getName();
-        return depositPlayer(playerName, amount);
+        return depositPlayer(player, amount);
     }
 
     @Override

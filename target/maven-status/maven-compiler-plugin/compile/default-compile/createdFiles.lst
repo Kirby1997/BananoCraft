@@ -1,9 +1,9 @@
 banano\bananominecraft\bananoeconomy\commands\nodeinfo.class
 banano\bananominecraft\bananoeconomy\events\OnJoin.class
-banano\bananominecraft\bananoeconomy\commands\deposit.class
 banano\bananominecraft\bananoeconomy\RPC.class
 banano\bananominecraft\bananoeconomy\VaultConnector.class
 banano\bananominecraft\bananoeconomy\commands\withdraw.class
+banano\bananominecraft\bananoeconomy\commands\UnFreeze.class
 banano\bananominecraft\bananoeconomy\events\OnJoin$1.class
 banano\bananominecraft\bananoeconomy\commands\tip.class
 banano\bananominecraft\bananoeconomy\DB.class

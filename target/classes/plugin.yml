@@ -17,16 +17,35 @@ commands:
   deposit:
     aliases: [dep]
     description: Displays your deposit address
+    permission: account.unfrozen
+    permission-message: "U FROZEN"
 
   tip:
     description: Send a tip to another player
+    permission: account.unfrozen
+    permission-message: "U FROZEN"
 
   withdraw:
     description: Withdraw bans to an address
+    permission: account.unfrozen
+    permission-message: "U FROZEN"
 
   balance:
     description: Displays your balance
     aliases: [bal]
+
+  freeze:
+    aliases: [f]
+    description: freeze player's account
+    usage: |
+      /<command> player - freezes account of player
+
+  unfreeze:
+    aliases: [unf]
+    description: unfreeze player's account
+    usage: |
+      /<command> player - unfreezes account of player
+
 
 permissions:
   BananoEconomy.nodeinfo.ip:
@@ -34,4 +53,5 @@ permissions:
       default: op
   BananoEconomy.nodeinfo:
       description: This permission allows
+
 
