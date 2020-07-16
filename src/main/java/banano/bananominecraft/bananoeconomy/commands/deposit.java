@@ -16,8 +16,11 @@ public class deposit implements CommandExecutor {
         if (sender instanceof Player) {
 
             Player player = (Player) sender;
-            String UUID = player.getUniqueId().toString();
-            String playerWallet = DB.getWallet(UUID);
+            if (!DB.isFrozen(player)){
+                player.sendMessage("u r frozen!!!!!!!!!");
+                return false;
+            }
+            String playerWallet = DB.getWallet(player);
 
             String walletURL = "https://creeper.banano.cc/explorer/account/" + playerWallet;
             player.spigot().sendMessage(( new ComponentBuilder( "Deposit bans to this address: " ).color( net.md_5.bungee.api.ChatColor.YELLOW ).append( playerWallet ).color( net.md_5.bungee.api.ChatColor.WHITE ).bold(true).create()));

@@ -28,10 +28,24 @@ commands:
     description: Displays your balance
     aliases: [bal]
 
+  freeze:
+    aliases: [f]
+    description: freeze player's account
+    usage: |
+      /<command> player - freezes account of player
+
+  unfreeze:
+    aliases: [unf]
+    description: unfreeze player's account
+    usage: |
+      /<command> player - unfreezes account of player
+
+
 permissions:
   BananoEconomy.nodeinfo.ip:
       description: This permission allows users to see the node IP with the nodeinfo command
       default: op
   BananoEconomy.nodeinfo:
       description: This permission allows
+
 

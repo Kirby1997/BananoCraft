@@ -30,11 +30,13 @@ public class tip implements CommandExecutor {
                         return false;
                     }
                     player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
-                    String sUUID = player.getUniqueId().toString();
-                    String sWallet = DB.getWallet(sUUID);
+                    String sWallet = DB.getWallet(player);
+                    if (!DB.isFrozen(player)){
+                            player.sendMessage("u r frozen!!!!!!!!!");
+                            return false;
+                    }
                     if(RPC.getBalance(sWallet) >= amount && amount > 0) {
-                        String tUUID = target.getUniqueId().toString();
-                        String tWallet = DB.getWallet(tUUID);
+                        String tWallet = DB.getWallet(target);
                         String blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
                         String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
 
