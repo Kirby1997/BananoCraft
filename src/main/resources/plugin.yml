@@ -1,7 +1,7 @@
 name: BananoEconomy
 version: ${project.version}
 main: banano.bananominecraft.bananoeconomy.Main
-api-version: 1.16.1
+api-version: 1.16
 authors: [Kirby]
 description: Hello World
 depend: [Vault]
