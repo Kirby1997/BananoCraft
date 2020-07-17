@@ -8,7 +8,7 @@ public class EconomyFuncs {
     public static Double getBalance(Player player){
 
         String playerWallet = DB.getWallet(player);
-        if (playerWallet == null)
+        if (playerWallet == null || DB.isFrozen(player))
             return 0.0;
 
         Double balance = RPC.getBalance(playerWallet);
