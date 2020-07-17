@@ -32,7 +32,7 @@ public class Freeze implements CommandExecutor {
             }else{
                 freezePlayer(p);
             }
-            commandSender.sendMessage(String.format("%s's account has been frozen!", p.getName()));
+            commandSender.sendMessage(String.format("%s's account has been frozen!", player));
         }
         return true;
     }
