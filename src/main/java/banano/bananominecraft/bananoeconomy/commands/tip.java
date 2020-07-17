@@ -17,13 +17,23 @@ public class tip implements CommandExecutor {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
 
         if(sender instanceof Player){
+
         Player player = (Player) sender;
+        if (DB.isFrozen(player)){
+                sender.sendMessage("u r frozen!!!!!!!!!");
+                return false;
+            }
+
             if(args.length == 2){
                 Player target = Bukkit.getPlayerExact(args[1]);
                 if(target == player){
                     player.sendMessage("You cannot tip yourself");
                 }
                 else if(target instanceof Player){
+                    if (DB.isFrozen(target)){
+                        sender.sendMessage(args[1]+"is frozen!!!!!!!!!");
+                        return false;
+                    }
                     double amount = Double.parseDouble(args[0]);
                     if(amount <= 0){
                         player.sendMessage("Amount has to be greater than 0");
@@ -31,10 +41,6 @@ public class tip implements CommandExecutor {
                     }
                     player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
                     String sWallet = DB.getWallet(player);
-                    if (DB.isFrozen(player)){
-                            player.sendMessage("u r frozen!!!!!!!!!");
-                            return false;
-                    }
                     if(RPC.getBalance(sWallet) >= amount && amount > 0) {
                         String tWallet = DB.getWallet(target);
                         String blockHash = RPC.sendTransaction(sWallet, tWallet, amount);

@@ -19,14 +19,15 @@ public class withdraw implements CommandExecutor {
 
         if (sender instanceof Player) {
             Player player = (Player) sender;
+            if (!DB.isFrozen(player)){
+                player.sendMessage("u r frozen!!!!!!!!!");
+                return false;
+            }
             String UUID = player.getUniqueId().toString();
             String playerWallet = DB.getWallet(player);
             try {
                 double amount = Double.parseDouble(args[0]);
-                if (!DB.isFrozen(player)){
-                    player.sendMessage("u r frozen!!!!!!!!!");
-                    return false;
-                }
+
                 if(amount <= 0){
                     player.sendMessage("Amount has to be greater than 0");
                     return false;
