@@ -30,7 +30,7 @@ public class UnFreeze implements CommandExecutor {
             }else{
                 unfreezePlayer(p);
             }
-            commandSender.sendMessage(String.format("%s's account has been unfrozen!", p.getName()));
+            commandSender.sendMessage(String.format("%s's account has been unfrozen!", player));
         }
         return true;
     }
