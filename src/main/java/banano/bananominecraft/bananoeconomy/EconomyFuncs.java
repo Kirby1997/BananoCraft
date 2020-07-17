@@ -68,7 +68,6 @@ public class EconomyFuncs {
             String playerWallet = DB.getWallet(player);
             String block = RPC.sendTransaction(sender,playerWallet,amount);
             return true;
-
         }
         catch (Exception e){
             e.printStackTrace();

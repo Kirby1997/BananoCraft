@@ -13,10 +13,6 @@ import org.bukkit.entity.Player;
 public class Freeze implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender commandSender, Command command, String s, String[] playersToFreeze) {
-        if (!commandSender.isOp()){
-            commandSender.sendMessage("You do not have permission!!");
-            return false;
-        }
         if (playersToFreeze.length < 1) {
             return false;
         }

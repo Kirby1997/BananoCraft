@@ -28,12 +28,16 @@ commands:
   freeze:
     aliases: [f]
     description: freeze player's account
+    permission: BananoEconomy.freezer
+    permission-message: You do not have /<permission>
     usage: |
       /<command> player - freezes account of player
 
   unfreeze:
     aliases: [unf]
     description: unfreeze player's account
+    permission: BananoEconomy.freezer
+    permission-message: You do not have /<permission>
     usage: |
       /<command> player - unfreezes account of player
 
@@ -44,5 +48,8 @@ permissions:
       default: op
   BananoEconomy.nodeinfo:
       description: This permission allows
+  BananoEconomy.freezer:
+      description: freeze boys
+      default: op
 
 
