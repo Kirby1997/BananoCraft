@@ -11,8 +11,12 @@ import org.bukkit.entity.Player;
 public class Freeze implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender commandSender, Command command, String s, String[] playersToFreeze) {
-        if (playersToFreeze.length < 1){
-            return  false;
+        if (!commandSender.isOp()){
+            commandSender.sendMessage("You do not have permission!!");
+            return false;
+        }
+        if (playersToFreeze.length < 1) {
+            return false;
         }
 
         for (String player : playersToFreeze) {
@@ -26,7 +30,7 @@ public class Freeze implements CommandExecutor {
                 p = op.getPlayer();
             }
             freezePlayer(p);
-            System.out.printf("%s's account has been frozen!", p.getName());
+            commandSender.sendMessage(String.format("%s's account has been frozen!", p.getName()));
         }
 
         return true;

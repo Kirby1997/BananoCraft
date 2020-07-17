@@ -11,6 +11,10 @@ import org.bukkit.entity.Player;
 public class UnFreeze implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender commandSender, Command command, String s, String[] playersToFreeze) {
+        if (!commandSender.isOp()){
+            commandSender.sendMessage("You do not have permission!!");
+            return false;
+        }
         if (playersToFreeze.length < 1) {
             return false;
         }
@@ -20,13 +24,13 @@ public class UnFreeze implements CommandExecutor {
             if (p == null){
                 OfflinePlayer op = Bukkit.getOfflinePlayer(player);
                 if (op == null || !op.hasPlayedBefore()){
-                    System.out.printf("%s no existy.", player);
+                   commandSender.sendMessage(String.format("%s no existy.", player));
                     return false;
                 }
                 p = op.getPlayer();
             }
             unfreezePlayer(p);
-            System.out.printf("%s's account has been unfrozen!", p.getName());
+            commandSender.sendMessage(String.format("%s's account has been unfrozen!", p.getName()));
         }
 
         return true;

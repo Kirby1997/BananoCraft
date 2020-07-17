@@ -31,7 +31,7 @@ public class tip implements CommandExecutor {
                     }
                     player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
                     String sWallet = DB.getWallet(player);
-                    if (!DB.isFrozen(player)){
+                    if (DB.isFrozen(player)){
                             player.sendMessage("u r frozen!!!!!!!!!");
                             return false;
                     }

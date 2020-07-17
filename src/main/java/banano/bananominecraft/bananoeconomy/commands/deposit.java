@@ -16,7 +16,7 @@ public class deposit implements CommandExecutor {
         if (sender instanceof Player) {
 
             Player player = (Player) sender;
-            if (!DB.isFrozen(player)){
+            if (DB.isFrozen(player)){
                 player.sendMessage("u r frozen!!!!!!!!!");
                 return false;
             }
