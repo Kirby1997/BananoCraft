@@ -25,6 +25,7 @@ public final class Main extends JavaPlugin implements Listener {
     public Logger log = Bukkit.getLogger();
     private Plugin plugin;
     private HashMap<UUID, PermissionAttachment> playerPermissions;
+    private static final Logger LOG = Logger.getLogger("org.mongodb.driver");
 
     @Override
     public void onEnable() {
@@ -50,6 +51,7 @@ public final class Main extends JavaPlugin implements Listener {
         setupWallet();
         System.out.println("wallet setup");
         DB.usersCollection.createIndex(Indexes.hashed("name"));
+        LOG.setLevel(Level.SEVERE);
     }
 
 
