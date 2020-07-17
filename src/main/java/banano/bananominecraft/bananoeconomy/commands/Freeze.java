@@ -1,6 +1,8 @@
 package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.DB;
+import com.mongodb.client.FindIterable;
+import org.bson.Document;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
@@ -22,17 +24,16 @@ public class Freeze implements CommandExecutor {
         for (String player : playersToFreeze) {
             Player p = Bukkit.getPlayer(player);
             if (p == null){
-                OfflinePlayer op = Bukkit.getOfflinePlayer(player);
-                if (op == null || !op.hasPlayedBefore()){
-                    System.out.printf("%s no existy.", player);
+                boolean ret = DB.freezePlayer(player);
+                if (!ret) {
+                    commandSender.sendMessage(String.format("%s no existy.", player));
                     return false;
                 }
-                p = op.getPlayer();
+            }else{
+                freezePlayer(p);
             }
-            freezePlayer(p);
             commandSender.sendMessage(String.format("%s's account has been frozen!", p.getName()));
         }
-
         return true;
     }
 

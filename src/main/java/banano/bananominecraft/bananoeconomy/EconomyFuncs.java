@@ -23,7 +23,6 @@ public class EconomyFuncs {
 
         String playerName = player.getName();
 
-
         try {
             if (!DB.accountExists(player)) {
                 String wallet =  RPC.accountCreate(-1);

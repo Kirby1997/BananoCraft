@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy;
 
+import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
@@ -8,7 +9,6 @@ import org.bson.Document;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
-import javax.print.Doc;
 import java.net.URI;
 
 import static com.mongodb.client.model.Filters.eq;
@@ -86,6 +86,27 @@ public class DB {
         return false;
     }
 
+    public static boolean freezePlayer(String uname){
+        FindIterable<Document> possibleOfflinePlayers = getUserDBEntry(uname);
+        if (possibleOfflinePlayers.first() == null){
+            return false;
+        }
+        usersCollection.updateMany(eq("name", uname),
+                new Document("$set", new Document("frozen",true)));
+        return true;
+
+    }
+    public static boolean unfreezePlayer(String uname){
+        FindIterable<Document> possibleOfflinePlayers = getUserDBEntry(uname);
+        if (possibleOfflinePlayers.first() == null){
+            return false;
+        }
+        usersCollection.updateMany(eq("name", uname),
+                new Document("$set", new Document("frozen",false)));
+        return true;
+
+    }
+
     public static boolean accountExists(Player player){
 
         Document user = getUserDBEntry(player);
@@ -111,6 +132,11 @@ public class DB {
         Document query = new Document("_id",playerUUID);
         Document user = usersCollection.find(query).first();
 
+        return user;
+    }
+    public static FindIterable<Document> getUserDBEntry(String name){
+        Document query = new Document("name",name);
+        FindIterable<Document> user = usersCollection.find(query);
         return user;
     }
 
