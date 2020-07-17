@@ -1,6 +1,8 @@
 package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.DB;
+import com.mongodb.client.FindIterable;
+import org.bson.Document;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
@@ -11,24 +13,27 @@ import org.bukkit.entity.Player;
 public class Freeze implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender commandSender, Command command, String s, String[] playersToFreeze) {
-        if (playersToFreeze.length < 1){
-            return  false;
+        if (!commandSender.isOp()){
+            commandSender.sendMessage("You do not have permission!!");
+            return false;
+        }
+        if (playersToFreeze.length < 1) {
+            return false;
         }
 
         for (String player : playersToFreeze) {
             Player p = Bukkit.getPlayer(player);
             if (p == null){
-                OfflinePlayer op = Bukkit.getOfflinePlayer(player);
-                if (op == null || !op.hasPlayedBefore()){
-                    System.out.printf("%s no existy.", player);
+                boolean ret = DB.freezePlayer(player);
+                if (!ret) {
+                    commandSender.sendMessage(String.format("%s no existy.", player));
                     return false;
                 }
-                p = op.getPlayer();
+            }else{
+                freezePlayer(p);
             }
-            freezePlayer(p);
-            System.out.printf("%s's account has been frozen!", p.getName());
+            commandSender.sendMessage(String.format("%s's account has been frozen!", p.getName()));
         }
-
         return true;
     }
 
