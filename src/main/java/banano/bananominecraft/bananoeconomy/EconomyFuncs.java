@@ -41,7 +41,7 @@ public class EconomyFuncs {
     // PLAYER TO MASTER WALLET
         double balance = getBalance(player);
 
-        if (balance - amount < 0) return false;
+        if (balance - amount < 0 || DB.isFrozen(player)) return false;
 
         try{
             String sender = DB.getWallet(player);
@@ -62,7 +62,7 @@ public class EconomyFuncs {
         String sender = RPC.getMasterWallet();
         double serverBalance = RPC.getBalance(sender);
 
-        if (serverBalance - amount < 0) return false;
+        if (serverBalance - amount < 0 || DB.isFrozen(player)) return false;
 
         try{
             String playerWallet = DB.getWallet(player);
