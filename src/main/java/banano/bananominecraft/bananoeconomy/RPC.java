@@ -1,6 +1,8 @@
 package banano.bananominecraft.bananoeconomy;
 
+import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.bukkit.plugin.Plugin;
 
@@ -13,6 +15,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 
 public class RPC{
@@ -95,25 +98,32 @@ public class RPC{
 
     }
 
-    public static String sendTransaction(String sender, String recipient, double value){
-        String payload = "{\"action\": \"send\"," +
+    public static String sendTransaction(String sender, String recipient, double value) throws TransactionError {
+        final String payload = "{\"action\": \"send\"," +
                 "\"wallet\": \"" + getWalletID() + "\"," +
                 "\"source\": \"" + sender + "\"," +
                 "\"destination\": \"" + recipient + "\"," +
                 "\"amount\": \"" + toRaw(value) + "\"}";
 
-        try{
-            String sendResponse = sendPost(payload);
-            JsonElement accountJson = new JsonParser().parse(sendResponse);
-            String blockHash = accountJson.getAsJsonObject().get("block").getAsString();
+        final JsonElement accountJson;
+        try {
+            final String sendResponse = sendPost(payload);
+            accountJson = new JsonParser().parse(sendResponse);
+        } catch (final Exception e) {
+            plugin.getLogger().info(() -> String.format("Failed to sendTransaction with payload: '%s' because: '%s'", payload, e.getLocalizedMessage()));
+            throw new TransactionError("Send transaction failed");
+        }
 
-            return blockHash;
+        final JsonObject json = accountJson.getAsJsonObject();
+        final JsonElement error = json.get("error");
+        if (error != null) {
+            throw new TransactionError(error.getAsString());
         }
-        catch (Exception e){
-            System.out.println(payload);
-            e.printStackTrace();
-        }
-        return "Transaction send failed";
+
+        return Optional
+                .ofNullable(json.get("block"))
+                .map(JsonElement::getAsString)
+                .orElseThrow(() -> new TransactionError("Send transaction resulted in missing block"));
     }
 
     public static Double getBalance(String account){
