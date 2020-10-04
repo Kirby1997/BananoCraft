@@ -36,6 +36,9 @@ public class Tip implements CommandExecutor {
         }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> System.out.println(""));
 
+        // Implementation Note:
+        // Because this parses to `double` instead of say an infinite precision `BigDouble` we can
+        //  round differently
         final String sAmount = args[0];
         final double amount;
         try {
