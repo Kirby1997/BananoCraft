@@ -1,8 +1,6 @@
 package banano.bananominecraft.bananoeconomy.events;
 
-import banano.bananominecraft.bananoeconomy.DB;
 import banano.bananominecraft.bananoeconomy.EconomyFuncs;
-import banano.bananominecraft.bananoeconomy.Main;
 import com.mongodb.Block;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -10,7 +8,6 @@ import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.HoverEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bson.Document;
-import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;

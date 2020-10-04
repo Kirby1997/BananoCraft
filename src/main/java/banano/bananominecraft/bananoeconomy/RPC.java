@@ -4,7 +4,6 @@ import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import jdk.internal.jline.internal.Log;
 import org.bukkit.plugin.Plugin;
 
 import java.io.BufferedReader;
@@ -17,7 +16,6 @@ import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.logging.Level;
 
 
 public class RPC{

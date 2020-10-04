@@ -4,7 +4,6 @@ import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
-
 import org.bson.Document;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;

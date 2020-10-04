@@ -2,16 +2,17 @@ package banano.bananominecraft.bananoeconomy;
 
 import banano.bananominecraft.bananoeconomy.commands.*;
 import banano.bananominecraft.bananoeconomy.events.OnJoin;
+import com.mongodb.client.model.Indexes;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
-import com.mongodb.client.model.Indexes;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.event.Listener;
+import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.permissions.PermissionAttachment;
+
 import java.util.HashMap;
 import java.util.UUID;
 import java.util.logging.Logger;
