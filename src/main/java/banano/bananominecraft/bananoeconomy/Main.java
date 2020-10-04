@@ -2,7 +2,6 @@ package banano.bananominecraft.bananoeconomy;
 
 import banano.bananominecraft.bananoeconomy.commands.*;
 import banano.bananominecraft.bananoeconomy.events.OnJoin;
-import banano.bananominecraft.bananoeconomy.DB;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import com.mongodb.client.model.Indexes;
@@ -15,7 +14,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.permissions.PermissionAttachment;
 import java.util.HashMap;
 import java.util.UUID;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 
@@ -40,7 +38,7 @@ public final class Main extends JavaPlugin implements Listener {
         getCommand("nodeinfo").setExecutor(new nodeinfo());
         getCommand("tip").setExecutor(new tip());
         getCommand("withdraw").setExecutor(new withdraw());
-        getCommand("balance").setExecutor(new balance());
+        getCommand("balance").setExecutor(new Balance());
         getCommand("freeze").setExecutor(new Freeze());
         getCommand("unfreeze").setExecutor(new UnFreeze());
 

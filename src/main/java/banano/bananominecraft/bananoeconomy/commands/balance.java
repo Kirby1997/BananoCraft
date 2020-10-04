@@ -9,7 +9,7 @@ import org.bukkit.entity.Player;
 
 import java.text.DecimalFormat;
 
-public class balance implements CommandExecutor {
+public class Balance implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
 
