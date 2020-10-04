@@ -38,7 +38,7 @@ public final class Main extends JavaPlugin implements Listener {
         getCommand("nodeinfo").setExecutor(new nodeinfo());
         getCommand("tip").setExecutor(new tip());
         getCommand("withdraw").setExecutor(new withdraw());
-        getCommand("balance").setExecutor(new Balance());
+        getCommand("balance").setExecutor(new Balance(this));
         getCommand("freeze").setExecutor(new Freeze());
         getCommand("unfreeze").setExecutor(new UnFreeze());
 
