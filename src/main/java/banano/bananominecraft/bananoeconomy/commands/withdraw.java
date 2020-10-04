@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.DB;
 import banano.bananominecraft.bananoeconomy.RPC;
+import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
@@ -34,8 +35,14 @@ public class withdraw implements CommandExecutor {
                 }
                 String amountStr = Double.toString(amount);
                 if (args.length == 2) {
-                    String withdrawAddr = args[1];
-                    String blockHash = RPC.sendTransaction(playerWallet,withdrawAddr,amount);
+                    final String withdrawAddr = args[1];
+                    final String blockHash;
+                    try {
+                        blockHash = RPC.sendTransaction(playerWallet, withdrawAddr, amount);
+                    } catch (final TransactionError error) {
+                        player.sendMessage(String.format("/withdraw %f %s failed with: %s", amount, withdrawAddr, error.getUserError()));
+                        return false;
+                    }
                     player.sendMessage(blockHash);
 
                     String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;

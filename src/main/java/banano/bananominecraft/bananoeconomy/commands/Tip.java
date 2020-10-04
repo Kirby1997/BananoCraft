@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.DB;
 import banano.bananominecraft.bananoeconomy.RPC;
+import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
@@ -68,31 +69,29 @@ public class Tip implements CommandExecutor {
             }
 
             player.sendMessage("Tipping " + target.getDisplayName() + " with " + amount + " bans.");
-
-            String sWallet = DB.getWallet(player);
-
-            // TODO : Rework the getBalance and sendTransaction to make them atomic
-            if (RPC.getBalance(sWallet) >= amount && amount > 0) {
-                final String tWallet = DB.getWallet(target);
-                final String blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
-                final String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
-
-                final TextComponent blocklink = new TextComponent("Click me to view the transaction in the block explorer");
-                blocklink.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, blockURL));
-                blocklink.setUnderlined(true);
-
-                final String amountstr = Double.toString(amount);
-                player.spigot().sendMessage((new ComponentBuilder("You have sent ").color(ChatColor.YELLOW).append(amountstr).color(ChatColor.WHITE).bold(true).append(" to ").color(ChatColor.YELLOW)
-                        .append(target.getDisplayName()).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
-                player.spigot().sendMessage(blocklink);
-
-                target.spigot().sendMessage((new ComponentBuilder("You have received ").color(ChatColor.YELLOW).append(amountstr).color(ChatColor.WHITE).bold(true).append(" from ").color(ChatColor.YELLOW)
-                        .append(player.getDisplayName()).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
-                target.spigot().sendMessage(blocklink);
-
-            } else {
-                player.sendMessage("Insufficient balance");
+            final String sWallet = DB.getWallet(player);
+            final String tWallet = DB.getWallet(target);
+            final String blockHash;
+            try {
+                blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
+            } catch (final TransactionError error) {
+                player.sendMessage(String.format("/tip %f %s failed with: %s", amount, targetPlayerName, error.getUserError()));
+                return;
             }
+
+            final String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
+            final TextComponent blocklink = new TextComponent("Click me to view the transaction in the block explorer");
+            blocklink.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, blockURL));
+            blocklink.setUnderlined(true);
+
+            final String amountstr = Double.toString(amount);
+            player.spigot().sendMessage((new ComponentBuilder("You have sent ").color(ChatColor.YELLOW).append(amountstr).color(ChatColor.WHITE).bold(true).append(" to ").color(ChatColor.YELLOW)
+                    .append(target.getDisplayName()).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
+            player.spigot().sendMessage(blocklink);
+
+            target.spigot().sendMessage((new ComponentBuilder("You have received ").color(ChatColor.YELLOW).append(amountstr).color(ChatColor.WHITE).bold(true).append(" from ").color(ChatColor.YELLOW)
+                    .append(player.getDisplayName()).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
+            target.spigot().sendMessage(blocklink);
         });
 
         return false;
