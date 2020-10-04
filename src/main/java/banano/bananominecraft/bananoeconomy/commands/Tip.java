@@ -34,16 +34,18 @@ public class Tip implements CommandExecutor {
             player.sendMessage("You need to enter an amount to send and a player to send to");
             player.sendMessage("/tip [amount] [playername]");
         }
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> System.out.println(""));
 
+        final String sAmount = args[0];
         final double amount;
         try {
-            amount = Double.parseDouble(args[0]);
+            amount = Double.parseDouble(sAmount);
             if (amount <= 0) {
-                player.sendMessage("Amount has to be greater than 0");
+                player.sendMessage(String.format("Amount ('%s') has to be greater than 0", sAmount));
                 return false;
             }
         } catch (final Exception e) {
-            sender.sendMessage("Amount is not a number greater than 0");
+            sender.sendMessage(String.format("Amount ('%s') is not a number greater than 0", sAmount));
             return false;
         }
 
@@ -75,7 +77,7 @@ public class Tip implements CommandExecutor {
             try {
                 blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
             } catch (final TransactionError error) {
-                player.sendMessage(String.format("/tip %f %s failed with: %s", amount, targetPlayerName, error.getUserError()));
+                player.sendMessage(String.format("Tip of %s to %s failed with: %s", sAmount, targetPlayerName, error.getUserError()));
                 return;
             }
 
