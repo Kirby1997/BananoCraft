@@ -36,9 +36,9 @@ public final class Main extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(new OnJoin(), this);
 
         getCommand("deposit").setExecutor(new deposit());
-        getCommand("nodeinfo").setExecutor(new nodeinfo());
+        getCommand("nodeinfo").setExecutor(new NodeInfo(this));
         getCommand("tip").setExecutor(new Tip(this));
-        getCommand("withdraw").setExecutor(new withdraw());
+        getCommand("withdraw").setExecutor(new Withdraw(this));
         getCommand("balance").setExecutor(new Balance(this));
         getCommand("freeze").setExecutor(new Freeze());
         getCommand("unfreeze").setExecutor(new UnFreeze());
