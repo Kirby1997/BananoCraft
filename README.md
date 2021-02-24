@@ -17,10 +17,23 @@ Find your database connection URI and put it in the BananoEconomy/config.yml fil
 
 Master wallet setup:  
 Set up a Banano Node or use the public API (https://nanoo.tools/bananode-api)
-Paste the IP in BananoEconomy/config.yml where it asks for an IP.
-Get a Banano wallet seed from vault.banano.cc or Kalium and paste it in BananoEconomy/config.yml where it asks for a seed
+Get a Banano wallet seed from vault.banano.cc or Kalium
+
+
+Installation steps:  
+Build plugin with Maven Package Build
+Copy BananoCraft.jar into your Minecraft server's /plugins folder  
+Run the server once and then shut it down again to generate the plugin config file.  
+In the new BananoEconomy folder open config.yml  
+Add your node IP  
+Add your wallet seed
+Add your MongoDB URI  
+Ignore the rest unless you know what you are doing. Empty fields will be auto filled.  
+
+Demo video:  https://www.youtube.com/watch?v=KR-cTu4XxLY
   
 
    
-Send donations to: ban_1kirby19w89i35yenyesnz7zqdyguzdb3e819dxrhdegdnsaphzeug39ntxj  
+Donations:   ban_1kirby19w89i35yenyesnz7zqdyguzdb3e819dxrhdegdnsaphzeug39ntxj  
+nano_3cejfd9g6x7fbxusojd43mp9ctb6d4s1w67hqph3udtb4kqupxrx5areqswr  
 For help, DM Kirby #8061 on Discord
