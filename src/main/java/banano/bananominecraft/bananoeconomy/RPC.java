@@ -27,6 +27,12 @@ public class RPC{
         return url;
     }
 
+    public static BigDecimal getMultiplier() {
+        BigDecimal multiplier = new BigDecimal(plugin.getConfig().getString("multiplier"));
+        return multiplier;
+
+    }
+
 
     public static String sendPost(String payload) throws Exception {
 
@@ -81,16 +87,17 @@ public class RPC{
     }
 
     private static BigInteger toRaw(double value){
-
+        BigDecimal multiplier = getMultiplier();
         BigDecimal bValue = new BigDecimal(Double.toString(value));
-        BigDecimal multiplier = new BigDecimal("100000000000000000000000000000");
+        //BigDecimal multiplier = new BigDecimal("100000000000000000000000000000");
         BigDecimal raw = bValue.multiply(multiplier);
 
         return raw.toBigInteger();
     }
 
     private static Double fromRaw(BigDecimal bigDecimal){
-        BigDecimal divisor = new BigDecimal("100000000000000000000000000000");
+        BigDecimal divisor = getMultiplier();
+        //BigDecimal divisor = new BigDecimal("100000000000000000000000000000");
         BigDecimal result = bigDecimal.divide(divisor);
 
 

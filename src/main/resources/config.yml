@@ -5,3 +5,11 @@ walletID: "INSERT WALLET ID FROM NODE HERE"
 # Don't touch masterWallet unless you know what you're doing
 masterWallet: "INSERT MASTER WALLET HERE"
 mongoURI: "INSERT MONGOURI HERE"
+
+multiplier: "100000000000000000000000000000" #banano
+#multiplier: "10000000000000000000000000" #nano
+
+exploreaccount: "https://creeper.banano.cc/explorer/account/" #banano
+#exploreaccount: "https://nanocrawler.cc/explorer/account/" #nano
+exploreblock: "https://creeper.banano.cc/explorer/block/" #banano
+#exploreblock: "https://nanocrawler.cc/explorer/block/" #nano

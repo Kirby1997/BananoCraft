@@ -21,42 +21,39 @@ public class NodeInfo implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-
-        //String nodeIP = getConfig().getString("IP");
-        try{
-            List<String> payload = RPC.getBlockCount();
-            String checked = payload.get(0);
-            String unchecked = payload.get(1);
-
-
-            if(sender instanceof Player){
-                Player player = (Player) sender;
-                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
-                    if (sender.isOp()) {
-                        try {
-                            player.sendMessage("The node IP is: " + RPC.getURL());
-                        } catch (Exception e) {
-                            e.printStackTrace();
+        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            //String nodeIP = getConfig().getString("IP");
+            try {
+                if (sender instanceof Player || sender instanceof ConsoleCommandSender) {
+                    List<String> payload = RPC.getBlockCount();
+                    String checked = payload.get(0);
+                    String unchecked = payload.get(1);
+                    String msg0 = "The node IP is: " + RPC.getURL();
+                    String msg1 = "Checked blocks: " + checked + " - Unchecked blocks: " + unchecked;
+                    String msg2 = "The server wallet is " + RPC.getMasterWallet();
+                    String msg3 = "It currently contains: " + RPC.getBalance(RPC.getMasterWallet());
+                    if(sender instanceof Player) {
+                        Player player = (Player) sender;
+                        if (sender.isOp()) {
+                            player.sendMessage(msg0);
                         }
+                        player.sendMessage(msg1);
+                        player.sendMessage(msg2);
+                        player.sendMessage(msg3);
                     }
-                    player.sendMessage("Checked Blocks: " + checked + " - Unchecked Blocks: " + unchecked);
-                    player.sendMessage("The server wallet is " + RPC.getMasterWallet());
-                    player.sendMessage("It currently contains: " + RPC.getBalance(RPC.getMasterWallet()));
-                });
+                    if(sender instanceof ConsoleCommandSender) {
+                        System.out.println(msg0);
+                        System.out.println(msg1);
+                        System.out.println(msg2);
+                        System.out.println(msg3);
+                    }
+                }
             }
-           if(sender instanceof ConsoleCommandSender) {
-                System.out.println("The node IP is: " + RPC.getURL());
-                System.out.println("Checked Blocks: " + checked + " - Unchecked Blocks: " + unchecked);
-                System.out.println("The server wallet is " + RPC.getMasterWallet());
-                System.out.println("It currently contains: " + RPC.getBalance(RPC.getMasterWallet()));
+            catch (Exception e){
+                e.printStackTrace();
             }
-        }
-        catch (Exception e){
-            e.printStackTrace();
-        }
+        });
 
         return false;
-
-
     }
 }

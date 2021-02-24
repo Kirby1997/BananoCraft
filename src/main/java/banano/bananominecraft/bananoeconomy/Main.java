@@ -13,8 +13,11 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 
+
+
 import java.util.HashMap;
 import java.util.UUID;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 
@@ -48,6 +51,7 @@ public final class Main extends JavaPlugin implements Listener {
         System.out.println("economy setup");
         setupWallet();
         System.out.println("wallet setup");
+        Bukkit.getLogger().setLevel(Level.SEVERE);
         DB.usersCollection.createIndex(Indexes.hashed("name"));
     }
 

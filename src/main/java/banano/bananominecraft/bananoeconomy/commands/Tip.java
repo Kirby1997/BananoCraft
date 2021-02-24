@@ -1,6 +1,7 @@
 package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.DB;
+import banano.bananominecraft.bananoeconomy.Main;
 import banano.bananominecraft.bananoeconomy.RPC;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import net.md_5.bungee.api.ChatColor;
@@ -12,13 +13,22 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
+
+import java.net.URL;
 
 public class Tip implements CommandExecutor {
     private final JavaPlugin plugin;
 
     public Tip(final JavaPlugin plugin) {
         this.plugin = plugin;
+    }
+
+
+    private URL getURL() throws Exception{
+        URL url = new URL(plugin.getConfig().getString("exploreblock"));
+        return url;
     }
 
     @Override
@@ -84,9 +94,9 @@ public class Tip implements CommandExecutor {
                 return;
             }
 
-            final String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
+            try{final URL blockURL = new URL ( getURL() + blockHash);
             final TextComponent blocklink = new TextComponent("Click me to view the transaction in the block explorer");
-            blocklink.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, blockURL));
+            blocklink.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, blockURL.toString()));
             blocklink.setUnderlined(true);
 
             final String amountstr = Double.toString(amount);
@@ -96,7 +106,10 @@ public class Tip implements CommandExecutor {
 
             target.spigot().sendMessage((new ComponentBuilder("You have received ").color(ChatColor.YELLOW).append(amountstr).color(ChatColor.WHITE).bold(true).append(" from ").color(ChatColor.YELLOW)
                     .append(player.getDisplayName()).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
-            target.spigot().sendMessage(blocklink);
+            target.spigot().sendMessage(blocklink);}
+            catch (Exception e){
+                System.out.println(e);
+            }
         });
 
         return false;

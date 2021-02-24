@@ -13,8 +13,12 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
+
+import java.net.URL;
 
 public class Withdraw implements CommandExecutor {
+
 
     private final JavaPlugin plugin;
 
@@ -22,60 +26,71 @@ public class Withdraw implements CommandExecutor {
         this.plugin = plugin;
     }
 
+    private  URL getURL() throws Exception{
+        URL url = new URL(plugin.getConfig().getString("exploreaccount"));
+        return url;
+    }
+
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-
-
-        if (sender instanceof Player) {
-            Player player = (Player) sender;
-            if (DB.isFrozen(player)){
-                player.sendMessage("u r frozen!!!!!!!!!");
-                return false;
-            }
-            String UUID = player.getUniqueId().toString();
-            String playerWallet = DB.getWallet(player);
-
-                try {
-                    double amount = Double.parseDouble(args[0]);
-
-                    if (amount <= 0) {
-                        player.sendMessage("Amount has to be greater than 0");
-                        return false;
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (sender instanceof Player) {
+                    Player player = (Player) sender;
+                    if (DB.isFrozen(player)){
+                        player.sendMessage("Your account has been frozen");
+                        return;
                     }
-                    String amountStr = Double.toString(amount);
-                    if (args.length == 2) {
-                        final String withdrawAddr = args[1];
-                        final String blockHash;
-                        try {
-                            blockHash = RPC.sendTransaction(playerWallet, withdrawAddr, amount);
-                        } catch (final TransactionError error) {
-                            player.sendMessage(String.format("/withdraw %f %s failed with: %s", amount, withdrawAddr, error.getUserError()));
-                            return false;
+                    String UUID = player.getUniqueId().toString();
+                    String playerWallet = DB.getWallet(player);
+
+                    try {
+                        double amount = Double.parseDouble(args[0]);
+
+                        if (amount <= 0) {
+                            player.sendMessage("Amount has to be greater than 0");
+                            return;
                         }
-                        player.sendMessage(blockHash);
+                        String amountStr = Double.toString(amount);
+                        if (args.length == 2) {
+                            final String withdrawAddr = args[1];
+                            final String blockHash;
+                            try {
+                                blockHash = RPC.sendTransaction(playerWallet, withdrawAddr, amount);
+                            } catch (final TransactionError error) {
+                                player.sendMessage(String.format("/withdraw %f %s failed with: %s", amount, withdrawAddr, error.getUserError()));
+                                return;
+                            }
+                            player.sendMessage(blockHash);
+                            try{final URL blockURL = new URL ( getURL() + blockHash);
 
-                        String blockURL = "https://creeper.banano.cc/explorer/block/" + blockHash;
-
-                        player.spigot().sendMessage((new ComponentBuilder("You have sent ").color(ChatColor.YELLOW).append(amountStr).color(ChatColor.WHITE).bold(true).append(" to ").color(ChatColor.YELLOW)
-                                .append(withdrawAddr).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
 
 
-                        TextComponent blocklink = new TextComponent("Click me to view the transaction in the block explorer");
-                        blocklink.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, blockURL));
-                        blocklink.setUnderlined(true);
-                        player.spigot().sendMessage(blocklink);
+                            player.spigot().sendMessage((new ComponentBuilder("You have sent ").color(ChatColor.YELLOW).append(amountStr).color(ChatColor.WHITE).bold(true).append(" to ").color(ChatColor.YELLOW)
+                                    .append(withdrawAddr).color(ChatColor.WHITE).bold(true).append(" with block ID : ").append(blockHash).color(ChatColor.YELLOW).bold(true).create()));
+
+
+                            TextComponent blocklink = new TextComponent("Click me to view the transaction in the block explorer");
+                            blocklink.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, blockURL.toString()));
+                            blocklink.setUnderlined(true);
+                            player.spigot().sendMessage(blocklink);}
+                            catch (Exception e){
+                                System.out.println(e);}
+                        } else {
+                            throw new Exception();
+                        }
+                    } catch (Exception e) {
+                        player.sendMessage("Wrong formatting. /withdraw <amount> <address>");
                     }
-                } catch (Exception e) {
-                    player.sendMessage("Wrong formatting. /withdraw <amount> <address>");
-                    e.printStackTrace();
-                }
 
-        }
-        return false;
+                }
+            }
+        }.runTaskAsynchronously(plugin);
+        return true;
     }
 }
-
 
 
 

@@ -28,8 +28,8 @@ public class OnJoin implements Listener {
         Player player = event.getPlayer();
         TextComponent welcomeMessage = new TextComponent("This server is running BananoEconomy!");
         welcomeMessage.setColor(ChatColor.YELLOW);
-        welcomeMessage.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL,"https://banano.cc"));
-        welcomeMessage.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new ComponentBuilder( "Visit the Banano website!").create()));
+        welcomeMessage.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL,"https://github.com/Kirby1997/BananoCraft"));
+        welcomeMessage.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new ComponentBuilder( "See the code!").create()));
         player.spigot().sendMessage(welcomeMessage);
 
         System.out.println("create account for player");

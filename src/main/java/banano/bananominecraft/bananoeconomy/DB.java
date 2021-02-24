@@ -15,6 +15,7 @@ import static com.mongodb.client.model.Filters.eq;
 
 public class DB {
 
+
     static Plugin plugin = Main.getPlugin(Main.class);
     private static MongoClient mongoClient = MongoClients.create(getMongoURI());
     public static MongoCollection<Document> usersCollection =
@@ -31,7 +32,7 @@ public class DB {
     }
 
     /**
-     * @returns: null if player doesn not exist.
+     * @returns: null if player doesn't not exist.
      */
     public static String getWallet(Player player){
 
@@ -123,7 +124,7 @@ public class DB {
     }
 
     /**
-     * @returns: null if player doesn not exist.
+     * @returns: null if player doesn't not exist.
      */
     public static Document getUserDBEntry(Player player){
 
