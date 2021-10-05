@@ -7,7 +7,7 @@ masterWallet: "INSERT MASTER WALLET HERE"
 mongoURI: "INSERT MONGOURI HERE"
 
 multiplier: "100000000000000000000000000000" #banano
-#multiplier: "10000000000000000000000000" #nano
+#multiplier: "1000000000000000000000000000000" #nano
 
 exploreaccount: "https://creeper.banano.cc/explorer/account/" #banano
 #exploreaccount: "https://nanocrawler.cc/explorer/account/" #nano
