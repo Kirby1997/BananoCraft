@@ -43,6 +43,7 @@ public class Tip implements CommandExecutor {
         if (args.length != 2) {
             player.sendMessage("You need to enter an amount to send and a player to send to");
             player.sendMessage("/tip [amount] [playername]");
+            return false;
         }
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> System.out.println(""));
 
