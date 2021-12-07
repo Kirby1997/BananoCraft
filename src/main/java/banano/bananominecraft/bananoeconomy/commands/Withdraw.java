@@ -27,7 +27,7 @@ public class Withdraw implements CommandExecutor {
     }
 
     private  URL getURL() throws Exception{
-        URL url = new URL(plugin.getConfig().getString("exploreaccount"));
+        URL url = new URL(plugin.getConfig().getString("exploreblock"));
         return url;
     }
 
