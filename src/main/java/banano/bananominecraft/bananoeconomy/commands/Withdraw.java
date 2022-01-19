@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.DB;
 import banano.bananominecraft.bananoeconomy.RPC;
+import banano.bananominecraft.bananoeconomy.Validator;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -14,6 +15,10 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 
 import java.net.URL;
 
@@ -54,6 +59,8 @@ public class Withdraw implements CommandExecutor {
                             return;
                         }
                         String amountStr = Double.toString(amount);
+
+                        // We can keep args.length to 2 by injecting JSON without spaces
                         if (args.length == 2) {
                             final String withdrawAddr = args[1];
                             final String blockHash;

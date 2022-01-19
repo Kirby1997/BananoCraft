@@ -3,7 +3,7 @@ version: ${project.version}
 main: banano.bananominecraft.bananoeconomy.Main
 api-version: 1.16
 authors: [Kirby]
-description: Hello World
+description: A Banano Tipbot for Minecraft
 depend: [Vault]
 commands:
 
