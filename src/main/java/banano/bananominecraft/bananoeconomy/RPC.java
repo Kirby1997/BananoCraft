@@ -20,10 +20,6 @@ import java.util.Optional;
 import org.json.simple.JSONObject;
 
 
-// TODO: JSONParser is deprecated, implement new parsing functions.
-// TODO: Improve Payload Generation by using JSON Factory to prevent injections
-// TODO: See method TODOs for validation requirements.
-
 public class RPC{
     static Plugin plugin = Main.getPlugin(Main.class);
 
@@ -88,8 +84,7 @@ public class RPC{
         try{
             String accountResponse = sendPost(payload);
             JsonElement accountJson = JsonParser.parseString(accountResponse);
-            String account = accountJson.getAsJsonObject().get("account").getAsString();
-            return account;
+            return accountJson.getAsJsonObject().get("account").getAsString();
         }
         catch (Exception e){
             System.out.println(payload);
@@ -115,18 +110,36 @@ public class RPC{
 
     // TODO: Extensive validation on sendTransaction
     public static String sendTransaction(String sender, String recipient, double value) throws TransactionError {
-        final String payload = "{\"action\": \"send\"," +
-                "\"wallet\": \"" + getWalletID() + "\"," +
-                "\"source\": \"" + sender + "\"," +
-                "\"destination\": \"" + recipient + "\"," +
-                "\"amount\": \"" + toRaw(value) + "\"}";
-
+        final JSONObject json_payload = new JSONObject();
+        final StringWriter out_payload = new StringWriter();
         final JsonElement accountJson;
+
+        String payload = "";
+
+        //Validate Sender and Recipient
+        if(!Validator.validateAddress(sender) || !Validator.validateAddress(recipient)){
+            throw new TransactionError("Invalid address for sender or recipient.");
+        }
+
+        json_payload.put("action", "send");
+        json_payload.put("source", sender);
+        json_payload.put("destination", recipient);
+        json_payload.put("amount", toRaw(value));
+
+        try{
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
+        }
+
         try {
             final String sendResponse = sendPost(payload);
-            accountJson = new JsonParser().parse(sendResponse);
+            accountJson = JsonParser.parseString(sendResponse);
         } catch (final Exception e) {
-            plugin.getLogger().info(() -> String.format("Failed to sendTransaction with payload: '%s' because: '%s'", payload, e.getLocalizedMessage()));
+            String logString = String.format("Failed to sendTransaction with payload: '%s' because: '%s'", payload, e.getLocalizedMessage());
+            plugin.getLogger().info(logString);
             throw new TransactionError("Send transaction failed");
         }
 
@@ -143,13 +156,26 @@ public class RPC{
     }
 
     public static Double getBalance(String account){
+        final JSONObject json_payload = new JSONObject();
+        final StringWriter out_payload = new StringWriter();
+        final JsonElement accountJson;
 
-        String payload = "{\"action\": \"account_info\"," +
-                "\"account\": \"" + account + "\"}";
+        String payload = "";
+        json_payload.put("action", "account_info");
+        json_payload.put("account", account);
+
+        try{
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
+        }
+
         try{
 
             String balanceResponse = sendPost(payload);
-            JsonElement accountJson = new JsonParser().parse(balanceResponse);
+            accountJson = JsonParser.parseString(balanceResponse);
             try{
                 BigDecimal bigDecimal = accountJson.getAsJsonObject().get("balance").getAsBigDecimal();
                 return fromRaw(bigDecimal);
@@ -172,10 +198,22 @@ public class RPC{
     }
 
     public static List<String> getBlockCount(){
-        String payload = "{\"action\": \"block_count\"}";
+        final JSONObject json_payload = new JSONObject();
+        final StringWriter out_payload = new StringWriter();
+
+        String payload = "";
+        json_payload.put("action", "block_count");
+
+        try{
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
+        }
 
         try {
-            JsonElement blocksJson = new JsonParser().parse(sendPost(payload));
+            JsonElement blocksJson = JsonParser.parseString(sendPost(payload));
             String checked = blocksJson.getAsJsonObject().get("count").toString();
             String unchecked = blocksJson.getAsJsonObject().get("unchecked").toString();
             return Arrays.asList(checked, unchecked);
@@ -188,12 +226,25 @@ public class RPC{
 
 
     public static Boolean wallet_exists(){
-        String walletID = getWalletID();
+        final JSONObject json_payload = new JSONObject();
+        final StringWriter out_payload = new StringWriter();
+        final String walletID = getWalletID();
 
-        String payload = "{\"action\": \"wallet_balances\"," +
-                "\"wallet\": \"" + walletID + "\"}";
+        String payload = "";
+        json_payload.put("action", "wallet_balances");
+        json_payload.put("wallet", walletID);
+
+        try{
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
+        }
+
+
         try {
-            JsonElement existsJson = new JsonParser().parse(sendPost(payload));
+            JsonElement existsJson = JsonParser.parseString(sendPost(payload));
             try{
                 String exists = existsJson.getAsJsonObject().get("error").getAsString();
                 if (exists.equals("Wallet not found") || exists.equals("Bad wallet number")){
@@ -216,13 +267,26 @@ public class RPC{
 
 
     public static Boolean wallet_contains(String account){
-        String walletID = getWalletID();
+        final JSONObject json_payload = new JSONObject();
+        final StringWriter out_payload = new StringWriter();
+        final String walletID = getWalletID();
+        String payload = "";
 
-        String payload = "{\"action\": \"account_contains\"," +
-                "\"wallet\": \"" + walletID + "\"," +
-                "\"account\": \"" + account + "\"}";
+        json_payload.put("action", "account_contains");
+        json_payload.put("wallet", walletID);
+        json_payload.put("account", account);
+
         try{
-            JsonElement existsJson = new JsonParser().parse(sendPost(payload));
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
+        }
+
+
+        try{
+            JsonElement existsJson = JsonParser.parseString(sendPost(payload));
             int exists = existsJson.getAsJsonObject().get("exists").getAsInt();
 
             if(exists == 1){
@@ -244,17 +308,31 @@ public class RPC{
 
         String seed = plugin.getConfig().getString("walletSeed");
 
-        String payload = "{\"action\": \"wallet_create\"," +
-                "\"seed\": \"" + seed + "\"}";
-        try{
-        JsonElement blocksJson = new JsonParser().parse(sendPost(payload));
-        String walletID = blocksJson.getAsJsonObject().get("wallet").toString().replaceAll("\"", "");
+        final JSONObject json_payload = new JSONObject();
+        final StringWriter out_payload = new StringWriter();
+        String payload = "";
 
-        System.out.println("Wallet ID generated: " + walletID);
-        plugin.getConfig().set("walletID", walletID);
-        plugin.saveConfig();
+        json_payload.put("action", "wallet_create");
+        json_payload.put("seed", seed);
+
+        try{
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
         }
-        catch (Exception e){
+
+
+        try{
+            JsonElement blocksJson = JsonParser.parseString(sendPost(payload));
+
+            String walletID = blocksJson.getAsJsonObject().get("wallet").toString().replaceAll("\"", "");
+
+            System.out.println("Wallet ID generated: " + walletID);
+            plugin.getConfig().set("walletID", walletID);
+            plugin.saveConfig();
+        } catch (Exception e){
             System.out.println("Payload\n" + payload);
             System.out.println(e);
         }
