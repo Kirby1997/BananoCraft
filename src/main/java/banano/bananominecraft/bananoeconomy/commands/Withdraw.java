@@ -63,13 +63,6 @@ public class Withdraw implements CommandExecutor {
                         // We can keep args.length to 2 by injecting JSON without spaces
                         if (args.length == 2) {
                             final String withdrawAddr = args[1];
-                            // Validate Withdraw Addr according to regex.
-
-                            if(!Validator.validateAddress(withdrawAddr)){
-                                player.sendMessage("/withdraw Failed. You can only withdraw to a valid ban_ address.");
-                                return;
-                            }
-
                             final String blockHash;
                             try {
                                 blockHash = RPC.sendTransaction(playerWallet, withdrawAddr, amount);

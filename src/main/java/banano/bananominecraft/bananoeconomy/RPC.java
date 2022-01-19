@@ -9,6 +9,7 @@ import org.bukkit.plugin.Plugin;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.StringWriter;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.HttpURLConnection;
@@ -16,10 +17,14 @@ import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import org.json.simple.JSONObject;
 
+
+// TODO: JSONParser is deprecated, implement new parsing functions.
+// TODO: Improve Payload Generation by using JSON Factory to prevent injections
+// TODO: See method TODOs for validation requirements.
 
 public class RPC{
-//private Plugin plugin = banano.bananominecraft.BananoEconomy.getPlugin(BananoEconomy.class);
     static Plugin plugin = Main.getPlugin(Main.class);
 
     public static URL getURL() throws Exception{
@@ -30,12 +35,10 @@ public class RPC{
     public static BigDecimal getMultiplier() {
         BigDecimal multiplier = new BigDecimal(plugin.getConfig().getString("multiplier"));
         return multiplier;
-
     }
 
-
+    //TODO: Check sendPost references for validation
     public static String sendPost(String payload) throws Exception {
-
         URL url = getURL();
 
         HttpURLConnection con = (HttpURLConnection)url.openConnection();
@@ -59,24 +62,33 @@ public class RPC{
         return response.toString();
     }
 
+    // TODO: JSON Factory for payload construction, not vulnerable unless config is compromised.
     public static String accountCreate(int index){
+        JSONObject json_payload = new JSONObject();
+        StringWriter out_payload = new StringWriter();
+        String payload = "";
 
+        String wallID = getWalletID();
 
-        String payload = "{\"action\": \"account_create\"," +
-                    "\"wallet\": \"" + getWalletID() + "\"}";
+        json_payload.put("action", "account_create");
+        json_payload.put("wallet", wallID);
 
         if(index != -1){
-            payload = "{\"action\": \"account_create\"," +
-                    "\"wallet\": \"" + getWalletID() + "\"," +
-                    "\"index\": \"" + index + "\"}";
+            json_payload.put("index", index);
         }
 
         try{
+            json_payload.writeJSONString(out_payload);
+            payload = out_payload.toString();
+        } catch (java.io.IOException e) {
+            System.out.println(json_payload);
+            e.printStackTrace();
+        }
 
+        try{
             String accountResponse = sendPost(payload);
-            JsonElement accountJson = new JsonParser().parse(accountResponse);
+            JsonElement accountJson = JsonParser.parseString(accountResponse);
             String account = accountJson.getAsJsonObject().get("account").getAsString();
-
             return account;
         }
         catch (Exception e){
@@ -89,7 +101,6 @@ public class RPC{
     private static BigInteger toRaw(double value){
         BigDecimal multiplier = getMultiplier();
         BigDecimal bValue = new BigDecimal(Double.toString(value));
-        //BigDecimal multiplier = new BigDecimal("100000000000000000000000000000");
         BigDecimal raw = bValue.multiply(multiplier);
 
         return raw.toBigInteger();
@@ -97,14 +108,12 @@ public class RPC{
 
     private static Double fromRaw(BigDecimal bigDecimal){
         BigDecimal divisor = getMultiplier();
-        //BigDecimal divisor = new BigDecimal("100000000000000000000000000000");
         BigDecimal result = bigDecimal.divide(divisor);
 
-
         return result.doubleValue();
-
     }
 
+    // TODO: Extensive validation on sendTransaction
     public static String sendTransaction(String sender, String recipient, double value) throws TransactionError {
         final String payload = "{\"action\": \"send\"," +
                 "\"wallet\": \"" + getWalletID() + "\"," +
@@ -176,6 +185,7 @@ public class RPC{
         }
         return Arrays.asList("Null", "Null");
     }
+
 
     public static Boolean wallet_exists(){
         String walletID = getWalletID();
