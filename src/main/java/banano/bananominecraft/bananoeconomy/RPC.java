@@ -63,7 +63,6 @@ public class RPC{
         JSONObject json_payload = new JSONObject();
         StringWriter out_payload = new StringWriter();
         String payload = "";
-
         String wallID = getWalletID();
 
         json_payload.put("action", "account_create");
@@ -113,6 +112,7 @@ public class RPC{
         final JSONObject json_payload = new JSONObject();
         final StringWriter out_payload = new StringWriter();
         final JsonElement accountJson;
+        final String walletID = getWalletID();
 
         String payload = "";
 
@@ -122,6 +122,7 @@ public class RPC{
         }
 
         json_payload.put("action", "send");
+        json_payload.put("wallet", walletID);
         json_payload.put("source", sender);
         json_payload.put("destination", recipient);
         json_payload.put("amount", toRaw(value));
