@@ -45,14 +45,13 @@ Set up a free database from mongodb.com ([or host your own](https://docs.mongodb
 
 ## Optional (Basic users, ignore me.)
 This is necessary when restoring backups etc.
-You may set `wallet_id` to the ID of the wallet created by your `wallet_create` RPC call to specify specific wallet on the node.
+You may set `walletId` to the ID of the wallet created by your `wallet_create` RPC call to specify specific wallet on the node.
 Doing so allows you to use previously created wallet.
 Of course, the specified seed should contain the wallet ID and the wallet has to contain the specified master account.
 
 Demo video:  https://www.youtube.com/watch?v=KR-cTu4XxLY
   
 
-   
 ## Donations:   
 * ban_1kirby19w89i35yenyesnz7zqdyguzdb3e819dxrhdegdnsaphzeug39ntxj
 
