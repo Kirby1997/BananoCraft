@@ -45,7 +45,7 @@ public class Withdraw implements CommandExecutor {
                 if (sender instanceof Player) {
                     Player player = (Player) sender;
                     if (DB.isFrozen(player)){
-                        player.sendMessage("Your account has been frozen");
+                        player.sendMessage("Your account is frozen!");
                         return;
                     }
                     String UUID = player.getUniqueId().toString();
