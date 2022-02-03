@@ -75,12 +75,12 @@ public class Tip implements CommandExecutor {
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             if (DB.isFrozen(player)) {
-                player.sendMessage("u r frozen!!!!!!!!!");
+                player.sendMessage("Your account is frozen!");
                 return;
             }
 
             if (DB.isFrozen(target)) {
-                player.sendMessage(targetPlayerName + "is frozen!!!!!!!!!");
+                player.sendMessage(targetPlayerName + "'s account is frozen!");
                 return;
             }
 

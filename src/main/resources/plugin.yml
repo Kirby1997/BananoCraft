@@ -16,6 +16,7 @@ commands:
     description: Displays your deposit address
 
   tip:
+    aliases: [send, pay]
     description: Send a tip to another player
 
   withdraw:
