@@ -57,4 +57,4 @@ Demo video:  https://www.youtube.com/watch?v=KR-cTu4XxLY
 
 * nano_3cejfd9g6x7fbxusojd43mp9ctb6d4s1w67hqph3udtb4kqupxrx5areqswr  
 
-For help, DM Kirby #8061 on Discord
+For help, contact Kirby #8061 on Discord. You can find me on the Banano server https://chat.banano.cc
