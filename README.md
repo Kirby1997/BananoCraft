@@ -1,5 +1,5 @@
 # BananoCraft
-
+# Mojang is currently in the process of updating their TOS. Use of this plugin may be against Minecraft's TOS in the future: https://www.minecraft.net/en-us/article/minecraft-and-nfts
 
 This plugin is use as is. It's in a working but unfinished state. 
 This plugin requires a Banano Node (https://github.com/BananoCoin/banano/wiki/Building-a-Bananode-from-sources).
