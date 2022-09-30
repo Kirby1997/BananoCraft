@@ -98,7 +98,8 @@ public class MysqlDBConnector extends BaseDBConnector {
                             "    playerUUID     VARCHAR(75) NOT NULL UNIQUE," +
                             "    name           VARCHAR(50) NOT NULL," +
                             "    wallet         VARCHAR(100) NOT NULL," +
-                            "    frozen         BOOLEAN NOT NULL DEFAULT FALSE" +
+                            "    frozen         BOOLEAN NOT NULL DEFAULT FALSE, " +
+                            "    PRIMARY KEY (playerUUID) " +
                             ")  ENGINE=INNODB";
 
         try {
