@@ -4,7 +4,16 @@ walletSeed: "INSERT WALLET SEED HERE"
 walletID: "INSERT WALLET ID FROM NODE HERE"
 # Don't touch masterWallet unless you know what you're doing
 masterWallet: "INSERT MASTER WALLET HERE"
-mongoURI: "INSERT MONGOURI HERE"
+
+# Database - for mongoDB, add the mongoURI (comment if using alternative)
+#mongoURI: "INSERT MONGOURI HERE"
+
+# Database - for MySQL, uncomment and populate the mysql config (comment if using alternative)
+#mysqlServerName: "dbservername"
+#mysqlPort: 3306
+#mysqlDatabaseName: "dbname"
+#mysqlUsername: "dbusername"
+#mysqlPassword: "dbpassword"
 
 multiplier: "100000000000000000000000000000" #banano
 #multiplier: "10000000000000000000000000" #nano
