@@ -1,33 +1,220 @@
 package banano.bananominecraft.bananoeconomy;
 
+import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
+import banano.bananominecraft.bananoeconomy.db.IDBConnector;
+import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class EconomyFuncs {
 
+    private final IDBConnector db;
 
-    public static Double getBalance(Player player){
-
-        String playerWallet = DB.getWallet(player);
-        if (playerWallet == null || DB.isFrozen(player))
-            return 0.0;
-
-        Double balance = RPC.getBalance(playerWallet);
-        System.out.println(balance);
-
-        return balance;
+    public EconomyFuncs(IDBConnector db) {
+        this.db = db;
     }
 
+    public boolean freezePlayer(Player player) {
 
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
 
-    public static void accountCreate(Player player){
+        if(playerRecord != null) {
+
+            return freezePlayer(playerRecord);
+
+        }
+
+        return false;
+
+    }
+
+    private boolean freezePlayer(PlayerRecord playerRecord) {
+
+        if(playerRecord != null) {
+
+            playerRecord.setFrozen(true);
+            this.db.updatePlayerRecord(playerRecord);
+
+            return true;
+
+        }
+
+        return false;
+
+    }
+
+    public boolean freezePlayer(String playerName) {
+
+        Player player = Bukkit.getPlayer(playerName);
+
+        if(player != null) {
+
+            return freezePlayer(player);
+
+        }
+        else {
+
+            List<OfflinePlayer> offlinePlayers = new ArrayList<OfflinePlayer>();
+
+            for(OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers()) {
+
+                if(offlinePlayer.getName().equalsIgnoreCase(playerName)) {
+
+                    offlinePlayers.add(offlinePlayer);
+
+                }
+
+            }
+
+            if(offlinePlayers.size() == 1) {
+
+                PlayerRecord offlineRecord = this.db.getOfflinePlayerRecord(offlinePlayers.get(0));
+
+                return freezePlayer(offlineRecord);
+
+            }
+
+        }
+
+        return false;
+
+    }
+
+    public boolean unfreezePlayer(Player player) {
+
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            return unfreezePlayer(playerRecord);
+
+        }
+
+        return false;
+
+    }
+
+    private boolean unfreezePlayer(PlayerRecord playerRecord) {
+
+        if(playerRecord != null) {
+
+            playerRecord.setFrozen(true);
+            this.db.updatePlayerRecord(playerRecord);
+
+            return true;
+
+        }
+
+        return false;
+
+    }
+
+    public boolean unfreezePlayer(String playerName) {
+
+        Player player = Bukkit.getPlayer(playerName);
+
+        if(player != null) {
+
+            return unfreezePlayer(player);
+
+        }
+        else {
+
+            List<OfflinePlayer> offlinePlayers = new ArrayList<OfflinePlayer>();
+
+            for(OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers()) {
+
+                if(offlinePlayer.getName().equalsIgnoreCase(playerName)) {
+
+                    offlinePlayers.add(offlinePlayer);
+
+                }
+
+            }
+
+            if(offlinePlayers.size() == 1) {
+
+                PlayerRecord offlineRecord = this.db.getOfflinePlayerRecord(offlinePlayers.get(0));
+
+                return unfreezePlayer(offlineRecord);
+
+            }
+
+        }
+
+        return false;
+
+    }
+
+    public Double getBalance(Player player){
+
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            String playerWallet = playerRecord.getWallet();
+
+            if (playerWallet == null || playerRecord.isFrozen()) {
+                return 0.0;
+            }
+
+            Double balance = RPC.getBalance(playerWallet);
+            System.out.println(balance);
+
+            return balance;
+
+        }
+
+        return 0d;
+    }
+
+    public boolean accountExists(Player player){
+
+        return this.db.hasPlayerRecord(player);
+
+    }
+
+    public void accountCreate(Player player){
 
         String playerName = player.getName();
 
         try {
-            if (!DB.accountExists(player)) {
-                String wallet =  RPC.accountCreate(-1);
-                DB.storeAccount(player, wallet);
-                System.out.println("Created new wallet for " + playerName);
+
+            if (!this.db.hasPlayerRecord(player)) {
+
+                String wallet = RPC.accountCreate(-1);
+
+                while(this.db.isAlreadyAssignedToOtherPlayer(wallet, player)) {
+                    wallet =  RPC.accountCreate(-1);
+                }
+
+                PlayerRecord playerRecord = this.db.createPlayerRecord(player, wallet);
+
+                if(playerRecord != null) {
+                    System.out.println("Created new wallet for " + playerName);
+                }
+                else {
+                    System.out.println("Could not create new wallet for " + playerName);
+                }
+            }
+            else {
+
+                PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+                if(playerRecord != null) {
+
+                    System.out.println("Player wallet loaded for " + playerName);
+
+                }
+                else {
+
+                    System.out.println("Player wallet could not be loaded for " + playerName + "!");
+
+                }
+
             }
 
         }
@@ -36,15 +223,30 @@ public class EconomyFuncs {
         }
     }
 
+    public void unloadAccount(Player player) {
 
-    public static boolean removeBalanceFP(Player player, double amount){
-    // PLAYER TO MASTER WALLET
+        this.db.unloadPlayerRecord(player);
+
+    }
+
+
+    public boolean removeBalanceFP(Player player, double amount){
+        // PLAYER TO MASTER WALLET
         double balance = getBalance(player);
 
-        if (balance - amount < 0 || DB.isFrozen(player)) return false;
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if (playerRecord == null
+              || balance - amount < 0
+              || playerRecord.isFrozen()) {
+
+            return false;
+
+        }
 
         try{
-            String sender = DB.getWallet(player);
+
+            String sender = playerRecord.getWallet();
             String block = RPC.sendTransaction(sender,RPC.getMasterWallet(),amount);
 
             return true;
@@ -57,15 +259,23 @@ public class EconomyFuncs {
 
     }
 
-    public static boolean addBalanceTP(Player player, double amount){
+    public boolean addBalanceTP(Player player, double amount){
         // MASTER WALLET TO PLAYER
         String sender = RPC.getMasterWallet();
         double serverBalance = RPC.getBalance(sender);
 
-        if (serverBalance - amount < 0 || DB.isFrozen(player)) return false;
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if (playerRecord == null
+              || serverBalance - amount < 0
+              || isFrozen(player)) {
+
+            return false;
+
+        }
 
         try{
-            String playerWallet = DB.getWallet(player);
+            String playerWallet = playerRecord.getWallet();
             String block = RPC.sendTransaction(sender,playerWallet,amount);
             return true;
 
@@ -78,6 +288,66 @@ public class EconomyFuncs {
 
     }
 
+    public boolean isFrozen(Player player) {
 
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            return playerRecord.isFrozen();
+
+        }
+
+        return false;
+
+    }
+
+    public String getWallet(Player player) {
+
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            return playerRecord.getWallet();
+
+        }
+
+        return "";
+
+    }
+
+    public boolean hasWallet(Player player) {
+
+        PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            String wallet = playerRecord.getWallet();
+
+            return wallet != null
+                     && wallet.startsWith("ban_");
+
+        }
+
+        return false;
+
+    }
+
+    public boolean hasWallet(OfflinePlayer player) {
+
+        PlayerRecord playerRecord = this.db.getOfflinePlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            String wallet = playerRecord.getWallet();
+
+            return wallet != null
+                    && wallet.startsWith("ban_");
+
+        }
+
+        return false;
+
+    }
 
 }

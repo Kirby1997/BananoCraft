@@ -9,6 +9,13 @@ import org.bukkit.entity.Player;
 import java.util.List;
 
 public class VaultConnector implements Economy {
+
+    private final EconomyFuncs economyFuncs;
+
+    public VaultConnector(EconomyFuncs economyFuncs) {
+        this.economyFuncs = economyFuncs;
+    }
+
     @Override
     public boolean isEnabled() {
         return Main.getPlugin(Main.class).isEnabled();
@@ -31,7 +38,7 @@ public class VaultConnector implements Economy {
 
     @Override
     public String format(double amount) {
-        return String.valueOf(amount) + "Bans";
+        return String.valueOf(amount) + " Bans";
     }
 
     @Override
@@ -52,10 +59,7 @@ public class VaultConnector implements Economy {
 
     @Override
     public boolean hasAccount(OfflinePlayer player) {
-        if (player.hasPlayedBefore()){
-            return DB.accountExists(player.getPlayer());
-        }
-        return false;
+        return economyFuncs.hasWallet(player);
     }
 
     @Override
@@ -74,7 +78,7 @@ public class VaultConnector implements Economy {
     public double getBalance(String playerName) {
         System.out.println(1);
         Player player = Bukkit.getServer().getPlayer(playerName);
-        Double balance = EconomyFuncs.getBalance(player);
+        Double balance = economyFuncs.getBalance(player);
 
         return balance;
     }
@@ -82,9 +86,9 @@ public class VaultConnector implements Economy {
     @Override
     public double getBalance(OfflinePlayer offlinePlayer) {
 
-        if (offlinePlayer.hasPlayedBefore()) {
+        if (economyFuncs.hasWallet(offlinePlayer)) {
             Player player = offlinePlayer.getPlayer();
-            return EconomyFuncs.getBalance(player);
+            return economyFuncs.getBalance(player);
         }
         System.out.println(2);
         return 0;
@@ -107,16 +111,16 @@ public class VaultConnector implements Economy {
     @Deprecated
     public boolean has(String playerName, double amount) {
         Player player = Bukkit.getServer().getPlayer(playerName);
-        return EconomyFuncs.getBalance(player) >= amount;
+        return economyFuncs.getBalance(player) >= amount;
     }
 
     @Override
     public boolean has(OfflinePlayer offlinePlayer, double amount) {
         System.out.println(offlinePlayer);
         System.out.println(amount);
-        if (offlinePlayer.hasPlayedBefore()) {
+        if (economyFuncs.hasWallet(offlinePlayer)) {
             Player player = offlinePlayer.getPlayer();
-            return EconomyFuncs.getBalance(player) >= amount;
+            return economyFuncs.getBalance(player) >= amount;
         }
         return false;
     }
@@ -143,10 +147,10 @@ public class VaultConnector implements Economy {
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer offlinePlayer, double amount) {
 
-        if (offlinePlayer.hasPlayedBefore()) {
+        if (economyFuncs.hasWallet(offlinePlayer)) {
             Player player = offlinePlayer.getPlayer();
             return new EconomyResponse(amount,
-                    EconomyFuncs.getBalance(player) - amount,EconomyFuncs.removeBalanceFP(player, amount)
+                    economyFuncs.getBalance(player) - amount,economyFuncs.removeBalanceFP(player, amount)
                     ? EconomyResponse.ResponseType.SUCCESS
                     : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
         }
@@ -171,19 +175,22 @@ public class VaultConnector implements Economy {
         System.out.println("DEPOSITING " + amount + " to " + playerName);
         String masterWallet = RPC.getMasterWallet();
         Player player = Bukkit.getServer().getPlayer(playerName);
-        return new EconomyResponse(amount, RPC.getBalance(masterWallet) - amount,EconomyFuncs.addBalanceTP(player, amount) ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
+        return new EconomyResponse(amount, RPC.getBalance(masterWallet) - amount,economyFuncs.addBalanceTP(player, amount) ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
     }
 
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer offlinePlayer, double amount) {
-        if (offlinePlayer.hasPlayedBefore()) {
+
+        if (economyFuncs.hasWallet(offlinePlayer)) {
+
             Player player = offlinePlayer.getPlayer();
             System.out.println("DEPOSITING " + amount + " to " + player.getName());
             String masterWallet = RPC.getMasterWallet();
             return new EconomyResponse(amount,
-                    RPC.getBalance(masterWallet) - amount,EconomyFuncs.addBalanceTP(player, amount)
+                    RPC.getBalance(masterWallet) - amount,economyFuncs.addBalanceTP(player, amount)
                     ? EconomyResponse.ResponseType.SUCCESS
                     : EconomyResponse.ResponseType.FAILURE, "Insufficient funds.");
+
         }
 
         return null;

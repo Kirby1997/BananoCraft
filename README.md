@@ -10,6 +10,14 @@ Run your server once with the plugin installed and shut down the server again.
 
 
 ## Database Setup:  
+
+## NoDB
+
+If you don't have access to an external MongoDB or MySQL database server, the `config.yml`
+file can exclude both MongoDB and MySQL settings and JSON files will be used and stored
+within the plugin's data folder.
+
+## MongoDB
 Set up a free database from mongodb.com ([or host your own](https://docs.mongodb.com/manual/tutorial/install-mongodb-on-ubuntu/))
 
 * Create a database called "BananoCraft" 
@@ -21,6 +29,27 @@ Set up a free database from mongodb.com ([or host your own](https://docs.mongodb
 `db.createCollection("users")`
 
 * Find your [database connection URI](https://docs.mongodb.com/manual/reference/connection-string/) and put it in the BananoEconomy/config.yml file.
+
+## MySQL
+Set up a new MySQL database with a database user that can be used by the plugin.
+
+* Create a database called "BananoCraft"
+
+* Run the following SQL in the BananoCraft schema to create the users table:
+* `CREATE TABLE IF NOT EXISTS users (
+      playerUUID     VARCHAR(75) NOT NULL UNIQUE,
+      name           VARCHAR(50) NOT NULL,
+      wallet         VARCHAR(100) NOT NULL,
+      frozen         BOOLEAN NOT NULL DEFAULT FALSE,
+      PRIMARY KEY (playerUUID)
+  )  ENGINE=INNODB;`
+
+* Add the MySQL connection details to the config.yml file:
+  `mysqlServerName: "dbservername"
+   mysqlPort: 3306
+   mysqlDatabaseName: "BananoCraft"
+   mysqlUsername: "dbusername"
+   mysqlPassword: "dbpassword"`
 
 
 ## Master wallet setup:  
