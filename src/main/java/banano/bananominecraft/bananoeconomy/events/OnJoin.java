@@ -15,6 +15,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 
 public class OnJoin implements Listener {
 
+    private final EconomyFuncs economyFuncs;
 
     Block<Document> printBlock = new Block<Document>() {
         @Override
@@ -22,19 +23,34 @@ public class OnJoin implements Listener {
             System.out.println(document.toJson());
         }
     };
+
+    public OnJoin(EconomyFuncs economyFuncs) {
+        this.economyFuncs = economyFuncs;
+    }
+
     @EventHandler
     public void onJoinServer(PlayerJoinEvent event){
 
         Player player = event.getPlayer();
+
         TextComponent welcomeMessage = new TextComponent("This server is running BananoEconomy!");
         welcomeMessage.setColor(ChatColor.YELLOW);
         welcomeMessage.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL,"https://github.com/Kirby1997/BananoCraft"));
         welcomeMessage.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new ComponentBuilder( "See the code!").create()));
         player.spigot().sendMessage(welcomeMessage);
 
-        System.out.println("create account for player");
-        EconomyFuncs.accountCreate(player);
+        try {
 
+            System.out.println("Creating account for player...");
+
+            economyFuncs.accountCreate(player);
+
+        }
+        catch (Exception ex) {
+
+            player.sendMessage(org.bukkit.ChatColor.RED + "There was an error configuring your BananoEconomy wallet!");
+
+        }
     }
 
 
