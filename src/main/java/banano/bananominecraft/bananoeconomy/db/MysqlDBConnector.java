@@ -35,7 +35,18 @@ public class MysqlDBConnector extends BaseDBConnector {
             FileConfiguration config = this.plugin.getConfig();
 
             String serverName = config.getString("mysqlServerName");
-            int port = config.getInt("mysqlPort");
+            int port = 3306;
+
+            if(config.isInt("mysqlPort")) {
+
+                port = config.getInt("mysqlPort");
+
+            } else {
+
+                port = Integer.parseInt(config.getString("mysqlPort"));
+
+            }
+
             String databaseName = config.getString("mysqlDatabaseName");
             String userName = config.getString("mysqlUsername");
             String password = config.getString("mysqlPassword");
