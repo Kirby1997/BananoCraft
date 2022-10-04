@@ -57,7 +57,9 @@ public class MysqlDBConnector extends BaseDBConnector {
             this.dataSource.addDataSourceProperty("databaseName", databaseName);
             this.dataSource.addDataSourceProperty("user", userName);
             this.dataSource.addDataSourceProperty("password", password);
-            this.dataSource.setMaxLifetime(30000);
+            this.dataSource.setIdleTimeout(45000);
+            this.dataSource.setMaxLifetime(60000);
+            this.dataSource.setMinimumIdle(5);
 
         }
         catch (Exception ex) {
