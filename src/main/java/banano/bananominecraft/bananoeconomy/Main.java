@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy;
 
 import banano.bananominecraft.bananoeconomy.commands.*;
 import banano.bananominecraft.bananoeconomy.commands.tabcompleters.*;
+import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import banano.bananominecraft.bananoeconomy.db.JsonDBConnector;
 import banano.bananominecraft.bananoeconomy.db.MongoDBConnector;
@@ -34,6 +35,7 @@ public final class Main extends JavaPlugin implements Listener {
 
     private IDBConnector db;
     private EconomyFuncs economyFuncs;
+    private ConfigEngine configEngine;
 
     @Override
     public void onEnable() {
@@ -68,25 +70,29 @@ public final class Main extends JavaPlugin implements Listener {
 
         }
 
+        this.configEngine = new ConfigEngine(this);
         this.economyFuncs = new EconomyFuncs(this.db);
 
         System.out.println("STARTED");
-        getServer().getPluginManager().registerEvents(new OnJoin(this.economyFuncs), this);
+        getServer().getPluginManager().registerEvents(new OnJoin(this, this.economyFuncs, this.db, this.configEngine), this);
         getServer().getPluginManager().registerEvents(new OnLeave(this.economyFuncs), this);
 
         getCommand("deposit").setExecutor(new Deposit(this, this.economyFuncs));
         getCommand("nodeinfo").setExecutor(new NodeInfo(this));
-        getCommand("tip").setExecutor(new Tip(this, this.economyFuncs));
+        getCommand("tip").setExecutor(new Tip(this, this.economyFuncs, this.configEngine, this.db));
         getCommand("withdraw").setExecutor(new Withdraw(this, this.economyFuncs));
         getCommand("balance").setExecutor(new Balance(this, this.economyFuncs));
         getCommand("freeze").setExecutor(new Freeze(this.economyFuncs));
         getCommand("unfreeze").setExecutor(new UnFreeze(this.economyFuncs));
+        getCommand("changenode").setExecutor(new SetNode(this.configEngine));
+        getCommand("showofflinetips").setExecutor(new ShowOfflineTransactions(this, this.economyFuncs, this.db, this.configEngine));
 
         getCommand("freeze").setTabCompleter(new FreezeTabCompleter());
         getCommand("unfreeze").setTabCompleter(new UnFreezeTabCompleter());
-        getCommand("tip").setTabCompleter(new TipTabCompleter());
+        getCommand("tip").setTabCompleter(new TipTabCompleter(this.configEngine));
         getCommand("withdraw").setTabCompleter(new WithdrawTabCompleter());
         getCommand("deposit").setTabCompleter(new DepositTabCompleter());
+        getCommand("changenode").setTabCompleter(new SetNodeTabCompleter());
 
         System.out.println("registered commands");
 
@@ -124,9 +130,9 @@ public final class Main extends JavaPlugin implements Listener {
     }
 
     private void setupWallet(){
-        System.out.println(RPC.wallet_exists());
+        System.out.println("Wallet exists: " + RPC.wallet_exists());
         if(!RPC.wallet_exists()){
-            System.out.println("MASTER WALLET DOES NOT EXIST -SETTING UP WALLET");
+            System.out.println("MASTER WALLET DOES NOT EXIST - SETTING UP WALLET");
             RPC.walletCreate();
             String masterWallet = RPC.accountCreate(0);
             System.out.println("MASTER WALLET: " + masterWallet);

@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy.db;
 
+import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import com.zaxxer.hikari.HikariDataSource;
 import org.bukkit.OfflinePlayer;
@@ -10,6 +11,9 @@ import org.bukkit.plugin.Plugin;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 public class MysqlDBConnector extends BaseDBConnector {
@@ -121,6 +125,29 @@ public class MysqlDBConnector extends BaseDBConnector {
             PreparedStatement userTableCreator = connection.prepareStatement(usersTable);
 
             userTableCreator.execute();
+            userTableCreator.close();
+
+        }
+        catch (Exception ex) {
+            ex.printStackTrace();
+        }
+
+        String offlinePaymentsTable = "CREATE TABLE IF NOT EXISTS offlinepayments (" +
+                "    playerUUID     VARCHAR(75) NOT NULL UNIQUE," +
+                "    fromplayername VARCHAR(50) NOT NULL," +
+                "    amount         DOUBLE NOT NULL," +
+                "    blockhash      VARCHAR(250) NOT NULL, " +
+                "    message        VARCHAR(250) NOT NULL, " +
+                "    transdate      TIMESTAMP NOT NULL, " +
+                "    PRIMARY KEY (playerUUID) " +
+                ")  ENGINE=INNODB";
+
+        try {
+
+            PreparedStatement offlinePaymentsTableCreator = connection.prepareStatement(offlinePaymentsTable);
+
+            offlinePaymentsTableCreator.execute();
+            offlinePaymentsTableCreator.close();
 
         }
         catch (Exception ex) {
@@ -179,8 +206,21 @@ public class MysqlDBConnector extends BaseDBConnector {
                                                     results.getString("wallet"),
                                                     results.getBoolean("frozen"));
 
-                    results.close();
 
+                }
+
+                try {
+                    results.close();
+                }
+                catch (Exception ex) {
+                    ex.printStackTrace();
+                }
+
+                try {
+                    query.close();
+                }
+                catch (Exception ex) {
+                    ex.printStackTrace();
                 }
 
                 if(playerRecord != null
@@ -238,6 +278,8 @@ public class MysqlDBConnector extends BaseDBConnector {
 
             success = insert.executeUpdate() > 0;
 
+            insert.close();
+
         }
         catch (Exception e) {
             e.printStackTrace();
@@ -274,6 +316,8 @@ public class MysqlDBConnector extends BaseDBConnector {
             insert.setString(2, playerRecord.getPlayerUUID());
 
             success = insert.executeUpdate() > 0;
+
+            insert.close();
 
         }
         catch (Exception e) {
@@ -339,8 +383,21 @@ public class MysqlDBConnector extends BaseDBConnector {
 
                 hasRecord = results.getInt("playercount") > 0;
 
-                results.close();
 
+            }
+
+            try {
+                results.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            try {
+                query.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
             }
 
         } catch (Exception ex) {
@@ -387,8 +444,21 @@ public class MysqlDBConnector extends BaseDBConnector {
 
                 hasRecord = results.getInt("playercount") > 0;
 
-                results.close();
 
+            }
+
+            try {
+                results.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            try {
+                query.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
             }
 
         } catch (Exception ex) {
@@ -408,6 +478,245 @@ public class MysqlDBConnector extends BaseDBConnector {
         }
 
         return hasRecord;
+
+    }
+
+    @Override
+    public boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord) {
+
+        boolean result = false;
+
+        Connection connection = getConnection();
+
+        try {
+
+            PreparedStatement insert = connection.prepareStatement("INSERT INTO offlinepayments (playerUUID, fromplayername, amount, blockhash, message, transdate) " +
+                                                                       "VALUES (?, ?, ?, ?, ?, ?)");
+
+            insert.setString(1, paymentRecord.getTargetPlayerUUID().toString());
+            insert.setString(2, paymentRecord.getFromPlayerName());
+            insert.setDouble(3, paymentRecord.getPaymentAmount());
+            insert.setString(4, paymentRecord.getBlockHash());
+            insert.setString(5, paymentRecord.getMessage());
+            insert.setTimestamp(6, Timestamp.valueOf(paymentRecord.getTransactionDate()));
+
+            insert.executeUpdate();
+            insert.close();
+
+            result = true;
+
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+        finally {
+
+            try {
+
+                connection.close();
+
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+
+        return result;
+
+    }
+
+    @Override
+    public List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer) {
+
+        List<OfflinePaymentRecord> paymentRecords = new ArrayList<>();
+
+        if(forPlayer == null) {
+
+            return paymentRecords;
+
+        }
+
+        Connection connection = getConnection();
+
+        try {
+
+            PreparedStatement query = connection.prepareStatement("SELECT playerUUID, fromplayername, amount, blockhash, message, transdate  " +
+                                                                      "FROM offlinepayments " +
+                                                                      "WHERE playerUUID = ?");
+
+            query.setString(1, forPlayer.getUniqueId().toString());
+
+            ResultSet results = query.executeQuery();
+
+            if(results != null) {
+
+                while (results.next()) {
+
+                    try {
+
+                        OfflinePaymentRecord paymentRecord = new OfflinePaymentRecord(UUID.fromString(results.getString("playerUUID")),
+                                                                                        results.getString("fromplayername"),
+                                                                                        results.getDouble("amount"),
+                                                                                        results.getString("blockhash"),
+                                                                                        results.getTimestamp("transdate").toLocalDateTime(),
+                                                                                        results.getString("message"));
+
+                        paymentRecords.add(paymentRecord);
+
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+
+                }
+
+            }
+
+            try {
+                results.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            try {
+                query.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+        catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        finally {
+
+            try {
+
+                connection.close();
+
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+
+        return paymentRecords;
+
+    }
+
+    @Override
+    public void deleteOfflinePaymentRecords(Player forPlayer) {
+
+        if(forPlayer == null) {
+            return;
+        }
+
+        Connection connection = getConnection();
+
+        try {
+
+            PreparedStatement delete = connection.prepareStatement("DELETE FROM offlinepayments " +
+                                                                       "WHERE playerUUID = ?");
+
+            delete.setString(1, forPlayer.getUniqueId().toString());
+
+            delete.executeUpdate();
+
+            delete.close();
+
+        }
+        catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        finally {
+
+            try {
+
+                connection.close();
+
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+
+    }
+
+    @Override
+    public double getOfflinePaymentsTotal(Player forPlayer) {
+
+        double result = 0;
+
+        if(forPlayer == null) {
+
+            return result;
+
+        }
+
+        Connection connection = getConnection();
+
+        try {
+
+            PreparedStatement query = connection.prepareStatement("SELECT SUM(amount) AS total " +
+                                                                      "FROM offlinepayments " +
+                                                                      "WHERE playerUUID = ?");
+
+            query.setString(1, forPlayer.getUniqueId().toString());
+
+            ResultSet results = query.executeQuery();
+
+            if(results != null) {
+
+                while (results.next()) {
+
+                    try {
+
+                        result = results.getDouble("total");
+
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+
+                }
+
+            }
+
+            try {
+                results.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            try {
+                query.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+        catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        finally {
+
+            try {
+
+                connection.close();
+
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+
+        return result;
 
     }
 

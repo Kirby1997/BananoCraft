@@ -1,17 +1,25 @@
 package banano.bananominecraft.bananoeconomy.db;
 
+import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import com.mongodb.BasicDBObject;
+import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Indexes;
 import com.mongodb.client.result.UpdateResult;
 import org.bson.Document;
+import org.bson.types.ObjectId;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import static com.mongodb.client.model.Filters.*;
@@ -197,6 +205,127 @@ public class MongoDBConnector extends BaseDBConnector {
             return false;
         }
 
+    }
+
+    @Override
+    public boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord) {
+
+        try {
+
+            String playerUUID = paymentRecord.getTargetPlayerUUID().toString();
+
+            Document document = new Document("_id", new ObjectId())
+                    .append("playerid", playerUUID)
+                    .append("transdate", paymentRecord.getTransactionDate().toInstant(ZoneOffset.UTC).toEpochMilli())
+                    .append("fromplayername", paymentRecord.getFromPlayerName())
+                    .append("amount", paymentRecord.getPaymentAmount())
+                    .append("blockhash", paymentRecord.getBlockHash())
+                    .append("message", paymentRecord.getMessage());
+
+            db.getCollection("offlinepayments").insertOne(document);
+
+            return true;
+
+        }
+        catch (Exception ex) {
+
+            ex.printStackTrace();
+
+        }
+
+        return false;
+    }
+
+    @Override
+    public List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer) {
+
+        List<OfflinePaymentRecord> paymentRecords = new ArrayList<>();
+
+        if(forPlayer != null) {
+
+            Document query = new Document("playerid", forPlayer.getUniqueId().toString());
+            FindIterable<Document> offlinePayments = db.getCollection("offlinepayments").find(query);
+
+            for (Document document: offlinePayments) {
+
+                try {
+
+                    OfflinePaymentRecord paymentRecord = new OfflinePaymentRecord(
+                        UUID.fromString(document.getString("playerid")),
+                        document.getString("fromplayername"),
+                        document.getDouble("amount"),
+                        document.getString("blockhash"),
+                        LocalDateTime.ofInstant(Instant.ofEpochMilli(document.getLong("transdate")), ZoneOffset.UTC),
+                        document.getString("message")
+                    );
+
+                    paymentRecords.add(paymentRecord);
+
+                }
+                catch (Exception ex) {
+
+                    ex.printStackTrace();
+
+                }
+
+            }
+
+        }
+
+        return paymentRecords;
+    }
+
+    @Override
+    public void deleteOfflinePaymentRecords(Player forPlayer) {
+
+        if(forPlayer == null) {
+
+            return;
+
+        }
+
+        try {
+
+            this.db.getCollection("offlinepayments")
+                    .deleteMany(eq("playerid", forPlayer.getUniqueId().toString()));
+
+        }
+        catch (Exception e) {
+
+            e.printStackTrace();
+
+        }
+
+    }
+
+    @Override
+    public double getOfflinePaymentsTotal(Player forPlayer) {
+
+        double result = 0;
+
+        if(forPlayer != null) {
+
+            Document query = new Document("playerid", forPlayer.getUniqueId().toString());
+            FindIterable<Document> offlinePayments = db.getCollection("offlinepayments").find(query);
+
+            for(Document document : offlinePayments) {
+
+                try {
+
+                    result += document.getDouble("amount");
+
+                }
+                catch (Exception ex) {
+
+                    ex.printStackTrace();
+
+                }
+
+            }
+
+        }
+
+        return result;
     }
 
 }
