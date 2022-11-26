@@ -17,7 +17,8 @@ commands:
 
   tip:
     description: Send a tip to another player
-
+    usage: |
+      /<command> [amount] [player] [optional message] - sends provided amount to player
   withdraw:
     description: Withdraw bans to an address
 
@@ -41,6 +42,17 @@ commands:
     usage: |
       /<command> player - unfreezes account of player
 
+  changenode:
+    aliases: [setnode]
+    description: Set the node address to use for transactions.
+    permission: BananoEconomy.changenode
+    permission-message: You do not have /<permission>
+    usage: |
+      /<command> <new node address in format http://[url/ip address][:port]>
+
+  showofflinetips:
+    aliases: [showofflinepayments, showofflinetransactions]
+    description: Displays the details of the changed transactions while the player was offline.
 
 permissions:
   BananoEconomy.nodeinfo.ip:

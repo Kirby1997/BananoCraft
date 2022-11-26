@@ -1,9 +1,11 @@
 package banano.bananominecraft.bananoeconomy.db;
 
+import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 
+import java.util.List;
 import java.util.UUID;
 
 public interface IDBConnector {
@@ -17,6 +19,11 @@ public interface IDBConnector {
 
     boolean hasPlayerRecord(Player player);
     boolean hasPlayerRecord(OfflinePlayer player);
+
+    boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord);
+    List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer);
+    void deleteOfflinePaymentRecords(Player forPlayer);
+    double getOfflinePaymentsTotal(Player forPlayer);
 
     void close();
 
