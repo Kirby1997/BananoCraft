@@ -1,6 +1,10 @@
 package banano.bananominecraft.bananoeconomy.events;
 
 import banano.bananominecraft.bananoeconomy.EconomyFuncs;
+import banano.bananominecraft.bananoeconomy.classes.MessageGenerator;
+import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
+import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
+import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import com.mongodb.Block;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.ClickEvent;
@@ -12,10 +16,18 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitRunnable;
+import org.bukkit.scheduler.BukkitTask;
+
+import java.util.List;
 
 public class OnJoin implements Listener {
 
+    private final Plugin plugin;
     private final EconomyFuncs economyFuncs;
+    private final IDBConnector db;
+    private final ConfigEngine configEngine;
 
     Block<Document> printBlock = new Block<Document>() {
         @Override
@@ -24,8 +36,11 @@ public class OnJoin implements Listener {
         }
     };
 
-    public OnJoin(EconomyFuncs economyFuncs) {
+    public OnJoin(Plugin plugin, EconomyFuncs economyFuncs, IDBConnector db, ConfigEngine configEngine) {
+        this.plugin = plugin;
         this.economyFuncs = economyFuncs;
+        this.db = db;
+        this.configEngine = configEngine;
     }
 
     @EventHandler
@@ -51,6 +66,35 @@ public class OnJoin implements Listener {
             player.sendMessage(org.bukkit.ChatColor.RED + "There was an error configuring your BananoEconomy wallet!");
 
         }
+
+        if(this.configEngine.getEnableOfflinePayment()) {
+
+            // Check if the player has offline payments and display a link to run the command if they do.
+            new BukkitRunnable() {
+                @Override
+                public void run() {
+
+                    try {
+
+                        double totalAmount = db.getOfflinePaymentsTotal(player);
+
+                        if (totalAmount > 0) {
+
+                            player.sendMessage(ChatColor.GOLD + ChatColor.BOLD.toString() + "You have received transactions totalling " + totalAmount + " Banano while you were offline!");
+
+                            player.spigot().sendMessage(MessageGenerator.generateClickToViewOfflinePayments());
+
+                        }
+
+                    } catch (Exception ex) {
+                        ex.printStackTrace();
+                    }
+
+                }
+            }.runTaskAsynchronously(this.plugin);
+
+        }
+
     }
 
 

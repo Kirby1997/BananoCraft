@@ -1,14 +1,22 @@
 package banano.bananominecraft.bananoeconomy.db;
 
+import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import com.google.gson.*;
+import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.*;
+import java.lang.reflect.Type;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.UUID;
 
 public class JsonDBConnector extends BaseDBConnector {
@@ -18,6 +26,7 @@ public class JsonDBConnector extends BaseDBConnector {
     private final Plugin plugin;
 
     private HashMap<String,String> claimedWallets = new HashMap<>(); // Wallet, PlayerUUID
+    private List<OfflinePaymentRecord> offlinePaymentRecords = new ArrayList<>();
 
     public JsonDBConnector(Plugin plugin) {
 
@@ -25,6 +34,16 @@ public class JsonDBConnector extends BaseDBConnector {
 
         initialiseDataDirectory();
         loadClaimedWallets();
+
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, new Runnable() {
+            @Override
+            public void run() {
+                //methods
+                saveOfflinePaymentRecords();
+            }
+        }, 18000, 18000);
+
+        loadOfflinePayments();
 
     }
 
@@ -235,6 +254,161 @@ public class JsonDBConnector extends BaseDBConnector {
 
         return this.claimedWallets.containsKey(walletAddress)
                  && !this.claimedWallets.get(walletAddress).equalsIgnoreCase(playerUUID);
+
+    }
+
+    @Override
+    public boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord) {
+
+        if(paymentRecord != null) {
+
+            offlinePaymentRecords.add(paymentRecord);
+
+            return true;
+
+        }
+
+        return false;
+
+    }
+
+    private boolean saveOfflinePaymentRecords() {
+
+        boolean success = true;
+
+        try {
+
+            File file = new File(this.dataLocation, "offlinepayments.json");
+
+            System.out.println("Saving offline payments file to " + file.getAbsolutePath());
+
+            if(!file.exists()) {
+
+                file.createNewFile();
+
+            }
+
+            Gson gson = new GsonBuilder()
+                    .registerTypeAdapter(LocalDateTime.class, new JsonSerializer<LocalDateTime>() {
+                        @Override
+                        public JsonElement serialize(LocalDateTime src, Type typeOfSrc, JsonSerializationContext context) {
+                            return new JsonPrimitive(src.toInstant(ZoneOffset.UTC).toEpochMilli());
+                        }
+                    }).create();
+
+            Writer fileWriter = new FileWriter(file, false);
+
+            gson.toJson(offlinePaymentRecords.toArray(), fileWriter);
+
+            fileWriter.flush();
+            fileWriter.close();
+
+            System.out.println("Offline Payments file has been saved successfully.");
+
+        }
+        catch (IOException ex) {
+
+            System.out.println("Offline Payments file save has failed.");
+            ex.printStackTrace();
+
+            success = false;
+
+        }
+
+        return success;
+
+    }
+
+    @Override
+    public List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer) {
+
+        if(forPlayer != null
+            && offlinePaymentRecords != null
+            && offlinePaymentRecords.size() > 0) {
+
+            return offlinePaymentRecords.stream()
+                                        .filter(x -> x.getTargetPlayerUUID().equals(forPlayer.getUniqueId()))
+                                        .toList();
+
+        }
+
+        return new ArrayList<>();
+
+    }
+
+    @Override
+    public void deleteOfflinePaymentRecords(Player forPlayer) {
+
+        offlinePaymentRecords.removeIf(x -> x.getTargetPlayerUUID().equals(forPlayer.getUniqueId()));
+
+    }
+
+    private void loadOfflinePayments() {
+
+        try {
+
+            File file = new File(this.dataLocation,  "offlinepayments.json");
+
+            if(!file.exists()) {
+
+                file.createNewFile();
+
+            }
+
+            Gson gson = new GsonBuilder()
+                    .registerTypeAdapter(LocalDateTime.class, new JsonDeserializer<LocalDateTime>() {
+                        @Override
+                        public LocalDateTime deserialize(JsonElement json, Type type, JsonDeserializationContext jsonDeserializationContext) throws JsonParseException {
+                            Instant instant = Instant.ofEpochMilli(json.getAsJsonPrimitive().getAsLong());
+                            return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
+                        }
+                    }).create();
+
+            Reader fileReader = new FileReader(file);
+
+            OfflinePaymentRecord[] records = gson.fromJson(fileReader, OfflinePaymentRecord[].class);
+
+            fileReader.close();
+
+            if(records != null
+                    && records.length > 0) {
+
+                for(OfflinePaymentRecord paymentRecord : records) {
+
+                    offlinePaymentRecords.add(paymentRecord);
+
+                }
+
+            }
+
+        }
+        catch (IOException ex) {
+
+            System.out.println("Loading offline payments file failed!");
+            ex.printStackTrace();
+
+        }
+
+    }
+
+    @Override
+    public double getOfflinePaymentsTotal(Player forPlayer) {
+
+        double result = 0;
+
+        if(forPlayer != null
+                && offlinePaymentRecords != null
+                && offlinePaymentRecords.size() > 0) {
+
+            for(OfflinePaymentRecord offlinePaymentRecord : offlinePaymentRecords.stream().filter(x -> x.getTargetPlayerUUID().equals(forPlayer.getUniqueId())).toList()) {
+
+                result += offlinePaymentRecord.getPaymentAmount();
+
+            }
+
+        }
+
+        return result;
 
     }
 

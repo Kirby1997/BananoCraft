@@ -1,10 +1,13 @@
 package banano.bananominecraft.bananoeconomy.db;
 
+import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.UUID;
 
 public class BaseDBConnector implements IDBConnector {
@@ -123,4 +126,25 @@ public class BaseDBConnector implements IDBConnector {
     public void close() {
 
     }
+
+    @Override
+    public boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord) {
+        return false;
+    }
+
+    @Override
+    public List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer) {
+        return new ArrayList<>();
+    }
+
+    @Override
+    public void deleteOfflinePaymentRecords(Player forPlayer) {
+
+    }
+
+    @Override
+    public double getOfflinePaymentsTotal(Player forPlayer) {
+        return 0;
+    }
+
 }

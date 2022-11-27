@@ -36,7 +36,7 @@ Set up a new MySQL database with a database user that can be used by the plugin.
 * Create a database called "BananoCraft"
 
 * Run the following SQL in the BananoCraft schema to create the users table:
-* `CREATE TABLE IF NOT EXISTS users (
+ `CREATE TABLE IF NOT EXISTS users (
       playerUUID     VARCHAR(75) NOT NULL UNIQUE,
       name           VARCHAR(50) NOT NULL,
       wallet         VARCHAR(100) NOT NULL,
@@ -45,11 +45,11 @@ Set up a new MySQL database with a database user that can be used by the plugin.
   )  ENGINE=INNODB;`
 
 * Add the MySQL connection details to the config.yml file:
-  `mysqlServerName: "dbservername"
-   mysqlPort: 3306
-   mysqlDatabaseName: "BananoCraft"
-   mysqlUsername: "dbusername"
-   mysqlPassword: "dbpassword"`
+  - `mysqlServerName: "dbservername"`
+  - `mysqlPort: <mysql port number used>`
+  - `mysqlDatabaseName: "BananoCraft"`
+  - `mysqlUsername: "dbusername"`
+  - `mysqlPassword: "dbpassword"`
 
 
 ## Master wallet setup:  
