@@ -12,6 +12,8 @@ public class ConfigEngine {
     private String explorerAccount = "https://creeper.banano.cc/explorer/account/";
     private String explorerBlock = "https://creeper.banano.cc/explorer/block/";
 
+    private String masterWallet = "";
+
     private boolean enableOfflinePayment = false;
 
     public ConfigEngine(Plugin plugin) {
@@ -37,6 +39,18 @@ public class ConfigEngine {
 
             this.explorerBlock = configuration.getString("exploreblock");
             System.out.println("Block Explorer URL identified: " + this.explorerBlock);
+
+            if(configuration.contains("masterWallet")) {
+
+                this.masterWallet = configuration.getString("masterWallet");
+                System.out.println("Master wallet address identified: " + this.masterWallet);
+
+            }
+            else {
+
+                System.out.println("Master wallet address not specified.");
+
+            }
 
             this.enableOfflinePayment = configuration.getBoolean("allowofflinepayment", false);
             System.out.println("Offline Payment Allowed: " + (this.enableOfflinePayment ? "ENABLED" : "DISABLED"));
@@ -91,6 +105,14 @@ public class ConfigEngine {
 
     public void setEnableOfflinePayment(boolean value) {
         this.enableOfflinePayment = value;
+    }
+
+    public String getMasterWallet() {
+        return this.masterWallet;
+    }
+
+    public void setMasterWallet(String walletAddress) {
+        this.masterWallet = walletAddress;
     }
 
 }

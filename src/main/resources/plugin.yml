@@ -50,18 +50,38 @@ commands:
     usage: |
       /<command> <new node address in format http://[url/ip address][:port]>
 
+  setblockexplorer:
+    aliases: [blockexplorer]
+    description: Set the block explorer url to use for viewing blocks.
+    permission: BananoEconomy.changeblockexplorer
+    permission-message: You do not have /<permission>
+    usage: |
+      /<command> <new block explorer url>
+
+  setaccountexplorer:
+    aliases: [accountexplorer,accexplorer]
+    description: Set the waller explorer url to use for viewing wallet addresses.
+    permission: BananoEconomy.changeaccountexplorer
+    permission-message: You do not have /<permission>
+    usage: |
+      /<command> <new wallet explorer url>
+
   showofflinetips:
     aliases: [showofflinepayments, showofflinetransactions]
     description: Displays the details of the changed transactions while the player was offline.
 
 permissions:
   BananoEconomy.nodeinfo.ip:
-      description: This permission allows users to see the node IP with the nodeinfo command
-      default: op
-  BananoEconomy.nodeinfo:
-      description: This permission allows
+    description: This permission allows users to see the node IP with the nodeinfo command
+    default: op
   BananoEconomy.freezer:
-      description: freeze boys
-      default: op
+    description: freeze boys
+    default: op
+  BananoEconomy.changeblockexplorer:
+    description: Enable setting the block explorer url.
+    default: op
+  BananoEconomy.changewalletexplorer:
+    description: Enable setting the wallet address explorer url.
+    default: op
 
 

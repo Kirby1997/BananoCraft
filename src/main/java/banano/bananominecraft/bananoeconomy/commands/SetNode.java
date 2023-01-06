@@ -1,29 +1,15 @@
 package banano.bananominecraft.bananoeconomy.commands;
 
-import banano.bananominecraft.bananoeconomy.EconomyFuncs;
 import banano.bananominecraft.bananoeconomy.RPC;
+import banano.bananominecraft.bananoeconomy.classes.MessageGenerator;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
-import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
-import net.md_5.bungee.api.chat.ClickEvent;
-import net.md_5.bungee.api.chat.ComponentBuilder;
-import net.md_5.bungee.api.chat.TextComponent;
-import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
-import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
-import org.bukkit.plugin.java.JavaPlugin;
 
-import java.net.URL;
-import java.util.Arrays;
-import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-public class SetNode implements CommandExecutor {
+public class SetNode extends BaseCommand implements CommandExecutor {
 
     private final ConfigEngine configEngine;
 
@@ -41,7 +27,7 @@ public class SetNode implements CommandExecutor {
             player = (Player) sender;
 
             if (player != null
-                    && !player.hasPermission("bananoeconomy.changenode")
+                    && !player.hasPermission("BananoEconomy.changenode")
                     && !player.isOp()) {
 
                 SendMessage(player, "You do not have permission to use this command!", ChatColor.RED);
@@ -78,16 +64,33 @@ public class SetNode implements CommandExecutor {
 
         SendMessage(player, "The node address has been set to '" + newNodeAddress + "'.", ChatColor.GREEN);
 
-        return false;
-    }
+        String masterWallet = this.configEngine.getMasterWallet();
 
-    protected void SendMessage(Player player, String message, ChatColor messageColour) {
+        if(!RPC.wallet_exists()){
+
+            SendMessage(player, "The master wallet does not exist... attempting to configure the master wallet.", ChatColor.AQUA);
+
+            RPC.walletCreate();
+
+            masterWallet = RPC.accountCreate(0);
+
+            this.configEngine.setMasterWallet(masterWallet);
+            this.configEngine.save();
+
+        }
+
         if(player != null) {
-            player.sendMessage(messageColour + message);
+
+            player.spigot().sendMessage(MessageGenerator.generateClickableAddressMessage(this.configEngine, "The master wallet has been set to: ", masterWallet));
+
         }
         else {
-            System.out.println(message);
+
+            SendMessage(player, "The master wallet address is " + masterWallet, ChatColor.AQUA);
+
         }
+
+        return true;
     }
 
 }

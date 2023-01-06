@@ -108,6 +108,42 @@ public class MessageGenerator {
 
     }
 
+    public static TextComponent generateClickableAddressMessage(ConfigEngine configEngine, String message, String walletAddress) {
 
+        TextComponent addressLink = new TextComponent(message + "\n");
+
+        addressLink.setColor(ChatColor.WHITE);
+
+        TextComponent clipboardLink = new TextComponent(walletAddress);
+        clipboardLink.setColor(ChatColor.AQUA);
+        clipboardLink.setClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, walletAddress));
+
+        addressLink.addExtra(clipboardLink);
+
+        URL addressURL = null;
+
+        try {
+
+            addressURL = new URL(configEngine.getExplorerAccount() + walletAddress);
+
+        }
+        catch (MalformedURLException ex) {
+
+        }
+
+        if(addressURL != null) {
+
+            TextComponent urlText = new TextComponent("\nClick me to view the account in the account explorer. ");
+            urlText.setClickEvent(new ClickEvent(ClickEvent.Action.OPEN_URL, addressURL.toString()));
+            urlText.setUnderlined(true);
+            urlText.setColor(ChatColor.YELLOW);
+
+            addressLink.addExtra(urlText);
+
+        }
+
+        return addressLink;
+
+    }
 
 }

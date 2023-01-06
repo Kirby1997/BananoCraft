@@ -86,6 +86,8 @@ public final class Main extends JavaPlugin implements Listener {
         getCommand("unfreeze").setExecutor(new UnFreeze(this.economyFuncs));
         getCommand("changenode").setExecutor(new SetNode(this.configEngine));
         getCommand("showofflinetips").setExecutor(new ShowOfflineTransactions(this, this.economyFuncs, this.db, this.configEngine));
+        getCommand("setblockexplorer").setExecutor(new SetBlockExplorer(this.configEngine));
+        getCommand("setaccountexplorer").setExecutor(new SetAccountExplorer(this.configEngine));
 
         getCommand("freeze").setTabCompleter(new FreezeTabCompleter());
         getCommand("unfreeze").setTabCompleter(new UnFreezeTabCompleter());
@@ -130,8 +132,11 @@ public final class Main extends JavaPlugin implements Listener {
     }
 
     private void setupWallet(){
+
         System.out.println("Wallet exists: " + RPC.wallet_exists());
+
         if(!RPC.wallet_exists()){
+
             System.out.println("MASTER WALLET DOES NOT EXIST - SETTING UP WALLET");
             RPC.walletCreate();
             String masterWallet = RPC.accountCreate(0);
