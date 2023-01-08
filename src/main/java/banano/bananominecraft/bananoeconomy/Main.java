@@ -77,24 +77,18 @@ public final class Main extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(new OnJoin(this, this.economyFuncs, this.db, this.configEngine), this);
         getServer().getPluginManager().registerEvents(new OnLeave(this.economyFuncs), this);
 
-        getCommand("deposit").setExecutor(new Deposit(this, this.economyFuncs));
+        getCommand("deposit").setExecutor(new Deposit(this, this.economyFuncs, this.configEngine));
         getCommand("nodeinfo").setExecutor(new NodeInfo(this));
         getCommand("tip").setExecutor(new Tip(this, this.economyFuncs, this.configEngine, this.db));
         getCommand("withdraw").setExecutor(new Withdraw(this, this.economyFuncs));
         getCommand("balance").setExecutor(new Balance(this, this.economyFuncs));
-        getCommand("freeze").setExecutor(new Freeze(this.economyFuncs));
-        getCommand("unfreeze").setExecutor(new UnFreeze(this.economyFuncs));
-        getCommand("changenode").setExecutor(new SetNode(this.configEngine));
         getCommand("showofflinetips").setExecutor(new ShowOfflineTransactions(this, this.economyFuncs, this.db, this.configEngine));
-        getCommand("setblockexplorer").setExecutor(new SetBlockExplorer(this.configEngine));
-        getCommand("setaccountexplorer").setExecutor(new SetAccountExplorer(this.configEngine));
+        getCommand("bc").setExecutor(new AdminCommand(this, this.configEngine, this.economyFuncs, this.db));
 
-        getCommand("freeze").setTabCompleter(new FreezeTabCompleter());
-        getCommand("unfreeze").setTabCompleter(new UnFreezeTabCompleter());
         getCommand("tip").setTabCompleter(new TipTabCompleter(this.configEngine));
         getCommand("withdraw").setTabCompleter(new WithdrawTabCompleter());
         getCommand("deposit").setTabCompleter(new DepositTabCompleter());
-        getCommand("changenode").setTabCompleter(new SetNodeTabCompleter());
+        getCommand("bc").setTabCompleter(new AdminCommandTabCompleter(this.configEngine, this.db));
 
         System.out.println("registered commands");
 

@@ -326,6 +326,53 @@ public class MongoDBConnector extends BaseDBConnector {
         }
 
         return result;
+
+    }
+
+    @Override
+    public List<PlayerRecord> getFrozenPlayers() {
+
+        List<PlayerRecord> records = new ArrayList<>();
+
+        Document query = new Document("frozen", true);
+        FindIterable<Document> queryResult = db.getCollection("users").find(query);
+
+        for(Document user : queryResult) {
+
+            PlayerRecord playerRecord = new PlayerRecord(user.getString("_id"),
+                                                            user.getString("name"),
+                                                            user.getString("wallet"),
+                                                            user.getBoolean("frozen"));
+
+            records.add(playerRecord);
+
+        }
+
+        return records;
+
+    }
+
+    @Override
+    public List<PlayerRecord> getUnfrozenPlayers() {
+
+        List<PlayerRecord> records = new ArrayList<>();
+
+        Document query = new Document("frozen", false);
+        FindIterable<Document> queryResult = db.getCollection("users").find(query);
+
+        for(Document user : queryResult) {
+
+            PlayerRecord playerRecord = new PlayerRecord(user.getString("_id"),
+                    user.getString("name"),
+                    user.getString("wallet"),
+                    user.getBoolean("frozen"));
+
+            records.add(playerRecord);
+
+        }
+
+        return records;
+
     }
 
 }

@@ -1,6 +1,5 @@
 package banano.bananominecraft.bananoeconomy.configuration;
 
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.Plugin;
 
@@ -70,6 +69,7 @@ public class ConfigEngine {
         config.set("allowofflinepayment", this.enableOfflinePayment);
 
         this.plugin.saveConfig();
+        this.plugin.reloadConfig();
 
         return true;
 
@@ -81,6 +81,7 @@ public class ConfigEngine {
 
     public void setNodeAddress(String newAddress) {
         this.nodeAddress = newAddress;
+        this.plugin.getConfig().set("IP", newAddress);
     }
 
     public String getExplorerAccount() {
@@ -89,6 +90,7 @@ public class ConfigEngine {
 
     public void setExplorerAccount(String newAddress) {
         this.explorerAccount = newAddress;
+        this.plugin.getConfig().set("exploreaccount", newAddress);
     }
 
     public String getExplorerBlock() {
@@ -97,6 +99,7 @@ public class ConfigEngine {
 
     public void setExplorerBlock(String newAddress) {
         this.explorerBlock = newAddress;
+        this.plugin.getConfig().set("exploreblock", newAddress);
     }
 
     public boolean getEnableOfflinePayment() {
@@ -105,6 +108,7 @@ public class ConfigEngine {
 
     public void setEnableOfflinePayment(boolean value) {
         this.enableOfflinePayment = value;
+        this.plugin.getConfig().set("allowofflinepayment", value);
     }
 
     public String getMasterWallet() {

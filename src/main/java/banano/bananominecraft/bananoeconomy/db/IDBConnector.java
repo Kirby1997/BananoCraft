@@ -25,6 +25,9 @@ public interface IDBConnector {
     void deleteOfflinePaymentRecords(Player forPlayer);
     double getOfflinePaymentsTotal(Player forPlayer);
 
+    List<PlayerRecord> getFrozenPlayers();
+    List<PlayerRecord> getUnfrozenPlayers();
+
     void close();
 
 }

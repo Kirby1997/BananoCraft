@@ -11,7 +11,7 @@ import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
-import org.bukkit.OfflinePlayer;
+import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -20,11 +20,9 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.net.URL;
 import java.time.LocalDateTime;
-import java.util.Arrays;
-import java.util.List;
 import java.util.UUID;
 
-public class Tip implements CommandExecutor {
+public class Tip extends BaseCommand implements CommandExecutor {
 
     private final JavaPlugin plugin;
     private final IDBConnector db;
@@ -36,31 +34,6 @@ public class Tip implements CommandExecutor {
         this.economyFuncs = economyFuncs;
         this.configEngine = configEngine;
         this.db = db;
-    }
-
-    private PlayerRecord findPlayer(String targetPlayerName) {
-
-        Player target = Bukkit.getPlayerExact(targetPlayerName);
-
-        if(target != null) {
-
-            return this.db.getPlayerRecord(target);
-
-        }
-        else if(this.configEngine.getEnableOfflinePayment()) {
-
-            List<OfflinePlayer> matchingPlayers = Arrays.stream(Bukkit.getOfflinePlayers()).filter(x -> x.getName().equalsIgnoreCase(targetPlayerName)).toList();
-
-            if(matchingPlayers.size() == 1) {
-
-                return this.db.getOfflinePlayerRecord(matchingPlayers.stream().findFirst().get());
-
-            }
-
-        }
-
-        return null;
-
     }
 
     @Override
@@ -76,8 +49,8 @@ public class Tip implements CommandExecutor {
         // Did they call things correctly?
         if (args.length < 2) {
 
-            player.sendMessage("You need to enter an amount to send and a player to send to:");
-            player.sendMessage("/tip [amount] [playername] [optional message]");
+            SendMessage(player, "You need to enter an amount to send and a player to send to:", ChatColor.RED);
+            SendMessage(player, "/tip [amount] [playername] [optional message]", ChatColor.RED);
             return false;
 
         }
@@ -94,36 +67,45 @@ public class Tip implements CommandExecutor {
 
         try {
 
-            amount = Double.parseDouble(sAmount);
+            if(sAmount.equalsIgnoreCase("all")) {
+
+                amount = RPC.getBalance(senderRecord.getWallet());
+
+            }
+            else {
+
+                amount = Double.parseDouble(sAmount);
+
+            }
 
             if (amount <= 0) {
 
-                player.sendMessage(String.format("Amount ('%s') has to be greater than 0", sAmount));
+                SendMessage(player, String.format("Amount ('%s') has to be greater than 0", sAmount), ChatColor.RED);
                 return false;
 
             }
 
         } catch (final Exception e) {
 
-            player.sendMessage(String.format("Amount ('%s') is not a number greater than 0", sAmount));
+            SendMessage(player, String.format("Amount ('%s') is not a number greater than 0", sAmount), ChatColor.RED);
             return false;
 
         }
 
         final String targetPlayerName = args[1];
-        final PlayerRecord target = findPlayer(targetPlayerName);
+        final PlayerRecord target = findPlayer(this.db, this.configEngine, targetPlayerName);
 
         if (target != null
               && senderRecord.getPlayerUUID().equals(target.getPlayerUUID())) {
 
-            player.sendMessage("You cannot tip yourself");
+            SendMessage(player, "You cannot tip yourself", ChatColor.RED);
 
             return false;
 
         }
         else if (target == null) {
 
-            player.sendMessage("Player needs to be online for you to tip them, or a unique player could not be identified by name,");
+            SendMessage(player, "Player needs to be online for you to tip them, or a unique player could not be identified by name,", ChatColor.RED);
             return false;
 
         }
@@ -132,19 +114,19 @@ public class Tip implements CommandExecutor {
 
             if (senderRecord.isFrozen()) {
 
-                player.sendMessage("You cannot access your wallet because it is frozen!");
+                SendMessage(player, "You cannot access your wallet because it is frozen!", ChatColor.RED);
                 return;
 
             }
 
             if (target.isFrozen()) {
 
-                player.sendMessage("You cannot tip " + targetPlayerName + " because their wallet is frozen!");
+                SendMessage(player, "You cannot tip " + targetPlayerName + " because their wallet is frozen!", ChatColor.RED);
                 return;
 
             }
 
-            player.sendMessage("Tipping " + target.getPlayerName() + " with " + amount + " bans.");
+            SendMessage(player, "Tipping " + target.getPlayerName() + " with " + amount + " bans.", ChatColor.WHITE);
 
             final String sWallet = senderRecord.getWallet();
             final String tWallet = target.getWallet();
@@ -152,7 +134,7 @@ public class Tip implements CommandExecutor {
             try {
                 blockHash = RPC.sendTransaction(sWallet, tWallet, amount);
             } catch (final TransactionError error) {
-                player.sendMessage(String.format("Tip of %s to %s failed with: %s", sAmount, targetPlayerName, error.getUserError()));
+                SendMessage(player, String.format("Tip of %s to %s failed with: %s", sAmount, targetPlayerName, error.getUserError()), ChatColor.RED);
                 return;
             }
 

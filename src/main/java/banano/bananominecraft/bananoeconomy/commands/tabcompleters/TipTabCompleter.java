@@ -25,11 +25,16 @@ public class TipTabCompleter implements TabCompleter {
 
         List<String> results = new ArrayList<>();
 
-        if(args.length == 1
-            && (args[0] == null
-                || args[0].length() == 0)) {
+        if(args.length == 1) {
 
-            results.add("[amount]");
+            results.add("all");
+
+            if(args[0] == null
+                    || args[0].length() == 0) {
+
+                results.add("[amount]");
+
+            }
 
         }
         else if(args.length == 2) {

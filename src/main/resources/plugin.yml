@@ -19,6 +19,7 @@ commands:
     description: Send a tip to another player
     usage: |
       /<command> [amount] [player] [optional message] - sends provided amount to player
+
   withdraw:
     description: Withdraw bans to an address
 
@@ -26,45 +27,13 @@ commands:
     description: Displays your balance
     aliases: [bal]
 
-  freeze:
-    aliases: [f]
-    description: freeze player's account
-    permission: BananoEconomy.freezer
+  bc:
+    aliases: [bananoeconomy,bananocraft,be]
+    description: Generic admin command to provide plugin admin.
+    permission: BananoEconomy.admin
     permission-message: You do not have /<permission>
     usage: |
-      /<command> player - freezes account of player
-
-  unfreeze:
-    aliases: [unf]
-    description: unfreeze player's account
-    permission: BananoEconomy.freezer
-    permission-message: You do not have /<permission>
-    usage: |
-      /<command> player - unfreezes account of player
-
-  changenode:
-    aliases: [setnode]
-    description: Set the node address to use for transactions.
-    permission: BananoEconomy.changenode
-    permission-message: You do not have /<permission>
-    usage: |
-      /<command> <new node address in format http://[url/ip address][:port]>
-
-  setblockexplorer:
-    aliases: [blockexplorer]
-    description: Set the block explorer url to use for viewing blocks.
-    permission: BananoEconomy.changeblockexplorer
-    permission-message: You do not have /<permission>
-    usage: |
-      /<command> <new block explorer url>
-
-  setaccountexplorer:
-    aliases: [accountexplorer,accexplorer]
-    description: Set the waller explorer url to use for viewing wallet addresses.
-    permission: BananoEconomy.changeaccountexplorer
-    permission-message: You do not have /<permission>
-    usage: |
-      /<command> <new wallet explorer url>
+      /<command> <setnode|freeze|unfreeze|explorer|serverwallet> <further parameters>
 
   showofflinetips:
     aliases: [showofflinepayments, showofflinetransactions]
@@ -74,14 +43,8 @@ permissions:
   BananoEconomy.nodeinfo.ip:
     description: This permission allows users to see the node IP with the nodeinfo command
     default: op
-  BananoEconomy.freezer:
-    description: freeze boys
-    default: op
-  BananoEconomy.changeblockexplorer:
-    description: Enable setting the block explorer url.
-    default: op
-  BananoEconomy.changewalletexplorer:
-    description: Enable setting the wallet address explorer url.
+  BananoEconomy.admin:
+    description: Access to the BananoCraft economy admin commands.
     default: op
 
 
