@@ -205,7 +205,7 @@ public class EconomyFuncs {
 
     }
 
-    public void accountCreate(Player player){
+    public boolean accountCreate(Player player){
 
         String playerName = player.getName();
 
@@ -215,18 +215,33 @@ public class EconomyFuncs {
 
                 String wallet = RPC.accountCreate(-1);
 
-                while(this.db.isAlreadyAssignedToOtherPlayer(wallet, player)) {
-                    wallet =  RPC.accountCreate(-1);
-                }
+                if(!wallet.equalsIgnoreCase("Account Creation Failed")) {
 
-                PlayerRecord playerRecord = this.db.createPlayerRecord(player, wallet);
+                    while (this.db.isAlreadyAssignedToOtherPlayer(wallet, player)) {
+                        wallet = RPC.accountCreate(-1);
+                    }
 
-                if(playerRecord != null) {
-                    System.out.println("Created new wallet for " + playerName);
+                    PlayerRecord playerRecord = this.db.createPlayerRecord(player, wallet);
+
+                    if (playerRecord != null) {
+
+                        System.out.println("Created new wallet for " + playerName);
+
+                        return true;
+
+                    } else {
+
+                        System.out.println("Could not create new wallet for " + playerName);
+
+                    }
+
                 }
                 else {
+
                     System.out.println("Could not create new wallet for " + playerName);
+
                 }
+
             }
             else {
 
@@ -235,6 +250,8 @@ public class EconomyFuncs {
                 if(playerRecord != null) {
 
                     System.out.println("Player wallet loaded for " + playerName);
+
+                    return true;
 
                 }
                 else {
@@ -249,6 +266,9 @@ public class EconomyFuncs {
         catch (Exception e){
             System.out.println(e);
         }
+
+        return false;
+
     }
 
     public void unloadAccount(Player player) {

@@ -54,25 +54,28 @@ public class OnJoin implements Listener {
         welcomeMessage.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new ComponentBuilder( "See the code!").create()));
         player.spigot().sendMessage(welcomeMessage);
 
-        try {
+        new BukkitRunnable() {
+            @Override
+            public void run() {
 
-            System.out.println("Creating account for player...");
+                try {
 
-            economyFuncs.accountCreate(player);
+                    System.out.println("Creating account for player...");
 
-        }
-        catch (Exception ex) {
+                    if(!economyFuncs.accountCreate(player)) {
 
-            player.sendMessage(org.bukkit.ChatColor.RED + "There was an error configuring your BananoEconomy wallet!");
+                        player.sendMessage(ChatColor.RED + "Your BananoEconomy wallet could not be configured! The node or database may be unavailable. Please try again by logging out and logging back in later.");
 
-        }
+                    }
 
-        if(this.configEngine.getEnableOfflinePayment()) {
+                }
+                catch (Exception ex) {
 
-            // Check if the player has offline payments and display a link to run the command if they do.
-            new BukkitRunnable() {
-                @Override
-                public void run() {
+                    player.sendMessage(org.bukkit.ChatColor.RED + "There was an error configuring your BananoEconomy wallet!");
+
+                }
+
+                if(configEngine.getEnableOfflinePayment()) {
 
                     try {
 
@@ -91,11 +94,10 @@ public class OnJoin implements Listener {
                     }
 
                 }
-            }.runTaskAsynchronously(this.plugin);
 
-        }
+            }
+        }.runTaskAsynchronously(this.plugin);
 
     }
-
 
 }
