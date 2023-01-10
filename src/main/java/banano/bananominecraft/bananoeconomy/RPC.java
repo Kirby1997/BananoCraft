@@ -1,6 +1,5 @@
 package banano.bananominecraft.bananoeconomy;
 
-import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
