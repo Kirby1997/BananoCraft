@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy;
 
+import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -47,6 +48,12 @@ public class RPC{
             byte[] input = payload.getBytes("utf-8");
             os.write(input, 0, input.length);
         }
+        catch (Exception e) {
+            for(Throwable throwable : e.getSuppressed()) {
+                throwable.printStackTrace();
+            }
+            e.printStackTrace();
+        }
         try(BufferedReader br = new BufferedReader(
                 new InputStreamReader(con.getInputStream(), "utf-8"))) {
 
@@ -54,6 +61,12 @@ public class RPC{
             while ((responseLine = br.readLine()) != null) {
                 response.append(responseLine.trim());
             }
+        }
+        catch (Exception e) {
+            for(Throwable throwable : e.getSuppressed()) {
+                throwable.printStackTrace();
+            }
+            e.printStackTrace();
         }
         return response.toString();
     }

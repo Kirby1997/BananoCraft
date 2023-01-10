@@ -720,4 +720,134 @@ public class MysqlDBConnector extends BaseDBConnector {
 
     }
 
+    @Override
+    public List<PlayerRecord> getFrozenPlayers() {
+
+        List<PlayerRecord> playerRecords = new ArrayList<>();
+
+        Connection connection = getConnection();
+
+        try {
+
+            // Query the database
+            PreparedStatement query = connection.prepareStatement("SELECT playerUUID, name, wallet, frozen " +
+                                                                      "FROM users " +
+                                                                      "WHERE frozen = ?");
+
+            query.setBoolean(1, true);
+
+            ResultSet results = query.executeQuery();
+
+            // We're only expecting one row - and should only ever have one per player!
+            if (results != null
+                    && results.next()) {
+
+                PlayerRecord playerRecord = new PlayerRecord(results.getString("playerUUID"),
+                                                            results.getString("name"),
+                                                            results.getString("wallet"),
+                                                            results.getBoolean("frozen"));
+
+                playerRecords.add(playerRecord);
+
+            }
+
+            try {
+                results.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            try {
+                query.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        } catch (Exception ex) {
+
+            ex.printStackTrace();
+
+        } finally {
+
+            try {
+
+                connection.close();
+
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+
+        return playerRecords;
+
+    }
+
+    @Override
+    public List<PlayerRecord> getUnfrozenPlayers() {
+
+        List<PlayerRecord> playerRecords = new ArrayList<>();
+
+        Connection connection = getConnection();
+
+        try {
+
+            // Query the database
+            PreparedStatement query = connection.prepareStatement("SELECT playerUUID, name, wallet, frozen " +
+                    "FROM users " +
+                    "WHERE frozen = ?");
+
+            query.setBoolean(1, false);
+
+            ResultSet results = query.executeQuery();
+
+            // We're only expecting one row - and should only ever have one per player!
+            if (results != null
+                    && results.next()) {
+
+                PlayerRecord playerRecord = new PlayerRecord(results.getString("playerUUID"),
+                        results.getString("name"),
+                        results.getString("wallet"),
+                        results.getBoolean("frozen"));
+
+                playerRecords.add(playerRecord);
+
+            }
+
+            try {
+                results.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            try {
+                query.close();
+            }
+            catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        } catch (Exception ex) {
+
+            ex.printStackTrace();
+
+        } finally {
+
+            try {
+
+                connection.close();
+
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+        }
+
+        return playerRecords;
+
+    }
+
 }

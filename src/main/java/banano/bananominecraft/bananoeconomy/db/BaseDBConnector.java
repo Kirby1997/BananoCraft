@@ -147,4 +147,18 @@ public class BaseDBConnector implements IDBConnector {
         return 0;
     }
 
+    @Override
+    public List<PlayerRecord> getFrozenPlayers() {
+
+        return this.playerRecords.values().stream().filter(x -> x.isFrozen()).toList();
+
+    }
+
+    @Override
+    public List<PlayerRecord> getUnfrozenPlayers() {
+
+        return this.playerRecords.values().stream().filter(x -> !x.isFrozen()).toList();
+
+    }
+
 }

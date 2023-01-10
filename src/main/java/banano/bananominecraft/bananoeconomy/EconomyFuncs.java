@@ -31,6 +31,20 @@ public class EconomyFuncs {
 
     }
 
+    public boolean freezePlayer(OfflinePlayer player) {
+
+        PlayerRecord playerRecord = this.db.getOfflinePlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            return freezePlayer(playerRecord);
+
+        }
+
+        return false;
+
+    }
+
     private boolean freezePlayer(PlayerRecord playerRecord) {
 
         if(playerRecord != null) {
@@ -97,11 +111,25 @@ public class EconomyFuncs {
 
     }
 
+    public boolean unfreezePlayer(OfflinePlayer player) {
+
+        PlayerRecord playerRecord = this.db.getOfflinePlayerRecord(player);
+
+        if(playerRecord != null) {
+
+            return unfreezePlayer(playerRecord);
+
+        }
+
+        return false;
+
+    }
+
     private boolean unfreezePlayer(PlayerRecord playerRecord) {
 
         if(playerRecord != null) {
 
-            playerRecord.setFrozen(true);
+            playerRecord.setFrozen(false);
             this.db.updatePlayerRecord(playerRecord);
 
             return true;

@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy.commands;
 
 import banano.bananominecraft.bananoeconomy.EconomyFuncs;
 import banano.bananominecraft.bananoeconomy.RPC;
+import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.chat.*;
 import org.bukkit.command.Command;
@@ -16,16 +17,18 @@ public class Deposit implements CommandExecutor {
 
     private final Plugin plugin;
     private final EconomyFuncs economyFuncs;
+    private final ConfigEngine configEngine;
 
-    public Deposit(Plugin plugin, EconomyFuncs economyFuncs) {
+    public Deposit(Plugin plugin, EconomyFuncs economyFuncs, ConfigEngine configEngine) {
 
         this.plugin = plugin;
         this.economyFuncs = economyFuncs;
+        this.configEngine = configEngine;
 
     }
 
     private URL getURL() throws Exception {
-        URL url = new URL(this.plugin.getConfig().getString("exploreaccount"));
+        URL url = new URL(this.configEngine.getExplorerAccount());
         return url;
     }
 

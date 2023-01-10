@@ -1,6 +1,5 @@
 package banano.bananominecraft.bananoeconomy.configuration;
 
-import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.Plugin;
 
@@ -11,6 +10,8 @@ public class ConfigEngine {
     private String nodeAddress = "";
     private String explorerAccount = "https://creeper.banano.cc/explorer/account/";
     private String explorerBlock = "https://creeper.banano.cc/explorer/block/";
+
+    private String masterWallet = "";
 
     private boolean enableOfflinePayment = false;
 
@@ -38,6 +39,18 @@ public class ConfigEngine {
             this.explorerBlock = configuration.getString("exploreblock");
             System.out.println("Block Explorer URL identified: " + this.explorerBlock);
 
+            if(configuration.contains("masterWallet")) {
+
+                this.masterWallet = configuration.getString("masterWallet");
+                System.out.println("Master wallet address identified: " + this.masterWallet);
+
+            }
+            else {
+
+                System.out.println("Master wallet address not specified.");
+
+            }
+
             this.enableOfflinePayment = configuration.getBoolean("allowofflinepayment", false);
             System.out.println("Offline Payment Allowed: " + (this.enableOfflinePayment ? "ENABLED" : "DISABLED"));
 
@@ -56,6 +69,7 @@ public class ConfigEngine {
         config.set("allowofflinepayment", this.enableOfflinePayment);
 
         this.plugin.saveConfig();
+        this.plugin.reloadConfig();
 
         return true;
 
@@ -67,6 +81,7 @@ public class ConfigEngine {
 
     public void setNodeAddress(String newAddress) {
         this.nodeAddress = newAddress;
+        this.plugin.getConfig().set("IP", newAddress);
     }
 
     public String getExplorerAccount() {
@@ -75,6 +90,7 @@ public class ConfigEngine {
 
     public void setExplorerAccount(String newAddress) {
         this.explorerAccount = newAddress;
+        this.plugin.getConfig().set("exploreaccount", newAddress);
     }
 
     public String getExplorerBlock() {
@@ -83,6 +99,7 @@ public class ConfigEngine {
 
     public void setExplorerBlock(String newAddress) {
         this.explorerBlock = newAddress;
+        this.plugin.getConfig().set("exploreblock", newAddress);
     }
 
     public boolean getEnableOfflinePayment() {
@@ -91,6 +108,15 @@ public class ConfigEngine {
 
     public void setEnableOfflinePayment(boolean value) {
         this.enableOfflinePayment = value;
+        this.plugin.getConfig().set("allowofflinepayment", value);
+    }
+
+    public String getMasterWallet() {
+        return this.masterWallet;
+    }
+
+    public void setMasterWallet(String walletAddress) {
+        this.masterWallet = walletAddress;
     }
 
 }
