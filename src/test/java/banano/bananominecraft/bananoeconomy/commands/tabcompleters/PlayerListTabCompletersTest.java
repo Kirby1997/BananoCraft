@@ -106,7 +106,7 @@ class PlayerListTabCompletersTest
         when(db.getUnfrozenPlayers()).thenReturn(List.of(
                 new PlayerRecord(UUID.randomUUID().toString(), "Active", "ban_x", false)));
 
-        List<String> r = new AdminCommandTabCompleter(configEngine, db)
+        List<String> r = new AdminCommandTabCompleter(configEngine, db, Runnable::run)
                 .onTabComplete(null, null, "be", new String[] { "freeze", "" });
 
         assertTrue(r.contains("Active"));
@@ -119,10 +119,43 @@ class PlayerListTabCompletersTest
         when(db.getFrozenPlayers()).thenReturn(List.of(
                 new PlayerRecord(UUID.randomUUID().toString(), "Frosty", "ban_x", true)));
 
-        List<String> r = new AdminCommandTabCompleter(configEngine, db)
+        List<String> r = new AdminCommandTabCompleter(configEngine, db, Runnable::run)
                 .onTabComplete(null, null, "be", new String[] { "unfreeze", "" });
 
         assertTrue(r.contains("Frosty"));
+    }
+
+    @Test
+    void admin_freeze_servesCachedNames_withoutRescanningEveryKeypress()
+    {
+        IDBConnector db = mock(IDBConnector.class);
+        when(db.getUnfrozenPlayers()).thenReturn(List.of(
+                new PlayerRecord(UUID.randomUUID().toString(), "Active", "ban_x", false)));
+
+        AdminCommandTabCompleter completer = new AdminCommandTabCompleter(configEngine, db, Runnable::run);
+        completer.onTabComplete(null, null, "be", new String[] { "freeze", "" });
+        completer.onTabComplete(null, null, "be", new String[] { "freeze", "A" });
+        List<String> r = completer.onTabComplete(null, null, "be", new String[] { "unfreeze", "" });
+
+        assertNotNull(r);
+        // One refresh within the TTL, regardless of how many Tab presses.
+        verify(db, times(1)).getUnfrozenPlayers();
+        verify(db, times(1)).getFrozenPlayers();
+    }
+
+    @Test
+    void admin_freeze_doesNotQueryDbOnCallingThread()
+    {
+        IDBConnector db = mock(IDBConnector.class);
+        java.util.List<Runnable> queued = new java.util.ArrayList<>();
+
+        AdminCommandTabCompleter completer = new AdminCommandTabCompleter(configEngine, db, queued::add);
+        List<String> r = completer.onTabComplete(null, null, "be", new String[] { "freeze", "" });
+
+        // The refresh was handed to the executor; the (still empty) cache is served meanwhile.
+        assertTrue(r.isEmpty());
+        assertEquals(1, queued.size());
+        verifyNoInteractions(db);
     }
 
     @Test

@@ -19,7 +19,8 @@ public final class DBConnectorFactory
      * Create the best-fit {@link IDBConnector} for the supplied plugin.
      *
      * <ul>
-     *   <li>If {@code mongoURI} is set → {@link MongoDBConnector}</li>
+     *   <li>If {@code mongoURI} is set → {@link MongoDBConnector} (falls back to
+     *       {@link JsonDBConnector}, with a loud warning, if the server is unreachable)</li>
      *   <li>Else if {@code mysqlServerName} is set → {@link MysqlDBConnector}</li>
      *   <li>Otherwise → {@link JsonDBConnector} (file-based fallback)</li>
      * </ul>
@@ -34,7 +35,23 @@ public final class DBConnectorFactory
         if (isConfigured(config, "mongoURI"))
         {
             plugin.getLogger().info("Initialising MongoDB connection...");
-            return new MongoDBConnector(plugin);
+
+            try
+            {
+                return new MongoDBConnector(plugin);
+            }
+            catch (MongoDBConnector.ConnectionFailedException ex)
+            {
+                // One clear line instead of a driver stack trace (issue #13).
+                plugin.getLogger().severe("MongoDB is unreachable: " + ex.getMessage()
+                        + " Check mongoURI in config.yml and that the MongoDB server is running.");
+                plugin.getLogger().warning("**************************************************************");
+                plugin.getLogger().warning("* FALLING BACK TO LOCAL JSON STORAGE. Player records created  *");
+                plugin.getLogger().warning("* now will NOT be in MongoDB. Fix the connection and restart. *");
+                plugin.getLogger().warning("**************************************************************");
+
+                return new JsonDBConnector(plugin);
+            }
         }
         else if (isConfigured(config, "mysqlServerName"))
         {

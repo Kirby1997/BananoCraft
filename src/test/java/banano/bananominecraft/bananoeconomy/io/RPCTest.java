@@ -608,7 +608,7 @@ class RPCTest
     @Test
     void walletExists_true_whenBalancesReturned() throws Exception
     {
-        // No "error" key -> the inner getAsString throws and we treat the wallet as present.
+        // No "error" key and a "balances" object -> the node confirmed the wallet.
         stubResponse("{\"balances\":{}}");
         assertTrue(rpc.wallet_exists());
     }

@@ -182,9 +182,9 @@ public class RPC
     }
 
     /**
-     * Parses a node response that must be a JSON object, then returns its {@code "block"} hash —
-     * throwing a {@link TransactionError} carrying the node's error text, or
-     * {@code missingBlockMessage} if no usable block hash is present.
+     * Returns the {@code "block"} hash from a parsed node response, throwing a
+     * {@link TransactionError} carrying the node's error text, or {@code missingBlockMessage}
+     * if no usable block hash is present.
      */
     private static String extractBlock(JsonObject json, String missingBlockMessage) throws TransactionError
     {
@@ -229,11 +229,25 @@ public class RPC
     }
 
     /**
-     * Sends a Banano transaction, signing with the specified wallet.
+     * Sends a Banano transaction, signing with the specified wallet, under a fresh idempotency id.
      *
      * @param walletId the node wallet ID whose seed controls the {@code sender} account
      */
     public String sendTransaction(String sender, String recipient, double value, String walletId)
+            throws TransactionError
+    {
+        return sendTransaction(sender, recipient, value, walletId, UUID.randomUUID().toString());
+    }
+
+    /**
+     * Sends a Banano transaction, signing with the specified wallet.
+     *
+     * @param walletId the node wallet ID whose seed controls the {@code sender} account
+     * @param sendId   unique id for this logical send (the node's {@code "id"} field): re-sending
+     *                 with the same id returns the original block instead of sending twice, so a
+     *                 caller that retries one logical send must reuse its id
+     */
+    public String sendTransaction(String sender, String recipient, double value, String walletId, String sendId)
             throws TransactionError
     {
         if (!Double.isFinite(value) || value <= 0)
@@ -270,9 +284,9 @@ public class RPC
         json_payload.addProperty("source",      sender);
         json_payload.addProperty("destination", recipient);
         json_payload.addProperty("amount",      raw);
-        // Unique per logical send: if this exact request is retried (e.g. after a timeout where
-        // the node did process it), the node returns the original block instead of sending twice.
-        json_payload.addProperty("id",          UUID.randomUUID().toString());
+        // Idempotency key: if this logical send is retried (e.g. after a timeout where the node
+        // did process it), the node returns the original block instead of sending twice.
+        json_payload.addProperty("id",          sendId);
 
         final JsonObject json;
 

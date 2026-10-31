@@ -4,6 +4,8 @@ import banano.bananominecraft.bananoeconomy.classes.BankRecord;
 import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import com.mongodb.BasicDBObject;
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
@@ -23,6 +25,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 import static com.mongodb.client.model.Filters.*;
@@ -35,14 +38,44 @@ public class MongoDBConnector extends BaseDBConnector
     private static final String COLLECTION_BANKS         = "banks";
     private static final String COLLECTION_BANK_MEMBERS  = "bank_members";
 
+    /** Fail fast instead of the driver's 30s default when the server is unreachable. */
+    private static final int CONNECT_TIMEOUT_SECONDS = 5;
+
+    /** Logger name used by the MongoDB Java driver for all its components. */
+    private static final String DRIVER_LOGGER_NAME = "org.mongodb.driver";
+
+    /**
+     * Strong reference to the driver's JUL logger: JUL only holds loggers weakly,
+     * so without this the level set in {@link #quietDriverLogging()} could be lost.
+     */
+    private static final java.util.logging.Logger DRIVER_JUL_LOGGER =
+            java.util.logging.Logger.getLogger(DRIVER_LOGGER_NAME);
+
     private final Plugin plugin;
     private final MongoClient mongoClient;
     private final MongoDatabase db;
 
+    /**
+     * Thrown when the MongoDB server cannot be reached (or the URI is invalid)
+     * while constructing the connector.
+     */
+    public static class ConnectionFailedException extends RuntimeException
+    {
+        public ConnectionFailedException(String message, Throwable cause)
+        {
+            super(message, cause);
+        }
+    }
+
+    /**
+     * @throws ConnectionFailedException if the server does not answer a ping
+     *                                   within a few seconds
+     */
     public MongoDBConnector(Plugin plugin)
     {
         this.plugin      = plugin;
-        this.mongoClient = MongoClients.create(getMongoURI());
+        quietDriverLogging();
+        this.mongoClient = connect(getMongoURI());
         this.db          = mongoClient.getDatabase(DATABASE_NAME);
         createUserCollectionIndex();
     }
@@ -50,6 +83,78 @@ public class MongoDBConnector extends BaseDBConnector
     private String getMongoURI()
     {
         return this.plugin.getConfig().getString("mongoURI");
+    }
+
+    /**
+     * Create the client with short timeouts and verify the server is reachable.
+     * The client is closed again if the ping fails so no background threads leak.
+     */
+    private static MongoClient connect(String uri)
+    {
+        MongoClient client = null;
+
+        try
+        {
+            MongoClientSettings settings = MongoClientSettings.builder()
+                    .applyConnectionString(new ConnectionString(uri))
+                    .applyToClusterSettings(b -> b.serverSelectionTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                    .applyToSocketSettings(b -> b.connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                    .build();
+
+            client = MongoClients.create(settings);
+            client.getDatabase(DATABASE_NAME).runCommand(new Document("ping", 1));
+
+            return client;
+        }
+        catch (RuntimeException ex)
+        {
+            if (client != null)
+            {
+                try
+                {
+                    client.close();
+                }
+                catch (RuntimeException ignored)
+                {
+                    // already failing; nothing more to do
+                }
+            }
+
+            // Deliberately does not include the URI: it may contain credentials.
+            throw new ConnectionFailedException(
+                    "Could not connect to MongoDB using the configured mongoURI: " + ex.getMessage(), ex);
+        }
+    }
+
+    /**
+     * The driver logs every connection / server-monitor event at INFO, which floods
+     * the console (issue #12). Raise its threshold to WARN. On Paper the driver logs
+     * through the server's SLF4J → Log4j2 binding, so Log4j2 is configured via
+     * reflection (log4j-core is not a compile dependency); java.util.logging is set
+     * too as a fallback for other setups.
+     */
+    static void quietDriverLogging()
+    {
+        try
+        {
+            Class<?> levelClass = Class.forName("org.apache.logging.log4j.Level");
+            Object warn = levelClass.getField("WARN").get(null);
+            Class<?> configurator = Class.forName("org.apache.logging.log4j.core.config.Configurator");
+            configurator.getMethod("setLevel", String.class, levelClass).invoke(null, DRIVER_LOGGER_NAME, warn);
+        }
+        catch (Throwable ignored)
+        {
+            // Log4j2 core not available — fall through to JUL.
+        }
+
+        try
+        {
+            DRIVER_JUL_LOGGER.setLevel(Level.WARNING);
+        }
+        catch (Throwable ignored)
+        {
+            // e.g. SecurityException; noise is preferable to failing startup
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -120,9 +225,10 @@ public class MongoDBConnector extends BaseDBConnector
 
             BasicDBObject setQuery = new BasicDBObject("$set", updateFields);
 
-            UpdateResult result = db.getCollection(COLLECTION_USERS).updateMany(searchQuery, setQuery);
+            UpdateResult result = db.getCollection(COLLECTION_USERS).updateOne(searchQuery, setQuery);
 
-            return result.getModifiedCount() > 0;
+            // Matched, not modified: saving an unchanged record is still a success.
+            return result.getMatchedCount() > 0;
         }
         catch (Exception ex)
         {
@@ -203,26 +309,33 @@ public class MongoDBConnector extends BaseDBConnector
             return paymentRecords;
         }
 
-        Document query = new Document("playerid", forPlayer.getUniqueId().toString());
-        FindIterable<Document> offlinePayments = db.getCollection(COLLECTION_OFFLINE_PAYS).find(query);
-
-        for (Document document : offlinePayments)
+        try
         {
-            try
+            Document query = new Document("playerid", forPlayer.getUniqueId().toString());
+            FindIterable<Document> offlinePayments = db.getCollection(COLLECTION_OFFLINE_PAYS).find(query);
+
+            for (Document document : offlinePayments)
             {
-                paymentRecords.add(new OfflinePaymentRecord(
-                        UUID.fromString(document.getString("playerid")),
-                        document.getString("fromplayername"),
-                        document.getDouble("amount"),
-                        document.getString("blockhash"),
-                        LocalDateTime.ofInstant(
-                                Instant.ofEpochMilli(document.getLong("transdate")), ZoneOffset.UTC),
-                        document.getString("message")));
+                try
+                {
+                    paymentRecords.add(new OfflinePaymentRecord(
+                            UUID.fromString(document.getString("playerid")),
+                            document.getString("fromplayername"),
+                            document.getDouble("amount"),
+                            document.getString("blockhash"),
+                            LocalDateTime.ofInstant(
+                                    Instant.ofEpochMilli(document.getLong("transdate")), ZoneOffset.UTC),
+                            document.getString("message")));
+                }
+                catch (Exception ex)
+                {
+                    plugin.getLogger().log(Level.WARNING, "Skipping malformed offline payment document.", ex);
+                }
             }
-            catch (Exception ex)
-            {
-                plugin.getLogger().log(Level.WARNING, "Skipping malformed offline payment document.", ex);
-            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to read offline payments.", ex);
         }
 
         return paymentRecords;
@@ -256,19 +369,29 @@ public class MongoDBConnector extends BaseDBConnector
         }
 
         double result = 0;
-        Document query = new Document("playerid", forPlayer.getUniqueId().toString());
-        FindIterable<Document> offlinePayments = db.getCollection(COLLECTION_OFFLINE_PAYS).find(query);
 
-        for (Document document : offlinePayments)
+        try
         {
-            try
+            Document query = new Document("playerid", forPlayer.getUniqueId().toString());
+            FindIterable<Document> offlinePayments = db.getCollection(COLLECTION_OFFLINE_PAYS).find(query);
+
+            for (Document document : offlinePayments)
             {
-                result += document.getDouble("amount");
+                try
+                {
+                    result += document.getDouble("amount");
+                }
+                catch (Exception ex)
+                {
+                    plugin.getLogger().log(Level.WARNING, "Skipping malformed amount in offline payment document.", ex);
+                }
             }
-            catch (Exception ex)
-            {
-                plugin.getLogger().log(Level.WARNING, "Skipping malformed amount in offline payment document.", ex);
-            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to total offline payments.", ex);
+
+            return 0;
         }
 
         return result;
@@ -303,12 +426,19 @@ public class MongoDBConnector extends BaseDBConnector
             return cached;
         }
 
-        Document doc = db.getCollection(COLLECTION_BANKS).find(eq("_id", bankName)).first();
-        if (doc != null)
+        try
         {
-            BankRecord record = documentToBankRecord(doc);
-            bankRecords.put(bankName, record);
-            return record;
+            Document doc = db.getCollection(COLLECTION_BANKS).find(eq("_id", bankName)).first();
+            if (doc != null)
+            {
+                BankRecord record = documentToBankRecord(doc);
+                bankRecords.put(bankName, record);
+                return record;
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to read bank record.", ex);
         }
 
         return null;
@@ -354,7 +484,17 @@ public class MongoDBConnector extends BaseDBConnector
             return true;
         }
 
-        return db.getCollection(COLLECTION_BANKS).find(eq("_id", bankName)).first() != null;
+        try
+        {
+            return db.getCollection(COLLECTION_BANKS).find(eq("_id", bankName)).first() != null;
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to check bank name.", ex);
+
+            // Fail closed: reporting "exists" stops a duplicate bank being created.
+            return true;
+        }
     }
 
     @Override
@@ -382,9 +522,16 @@ public class MongoDBConnector extends BaseDBConnector
     {
         List<String> names = new ArrayList<>();
 
-        for (Document doc : db.getCollection(COLLECTION_BANKS).find())
+        try
         {
-            names.add(doc.getString("_id"));
+            for (Document doc : db.getCollection(COLLECTION_BANKS).find())
+            {
+                names.add(doc.getString("_id"));
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to list bank names.", ex);
         }
 
         return names;
@@ -411,9 +558,20 @@ public class MongoDBConnector extends BaseDBConnector
             return true;
         }
 
-        boolean isMember = db.getCollection(COLLECTION_BANK_MEMBERS)
-                .find(and(eq("bankName", bankName), eq("playerUuid", playerUuid)))
-                .first() != null;
+        boolean isMember;
+
+        try
+        {
+            isMember = db.getCollection(COLLECTION_BANK_MEMBERS)
+                    .find(and(eq("bankName", bankName), eq("playerUuid", playerUuid)))
+                    .first() != null;
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to check bank membership.", ex);
+
+            return false;
+        }
 
         if (isMember)
         {
@@ -452,8 +610,9 @@ public class MongoDBConnector extends BaseDBConnector
     {
         try
         {
+            // deleteMany: older versions could insert duplicate membership documents.
             DeleteResult result = db.getCollection(COLLECTION_BANK_MEMBERS)
-                    .deleteOne(and(eq("bankName", bankName), eq("playerUuid", playerUuid)));
+                    .deleteMany(and(eq("bankName", bankName), eq("playerUuid", playerUuid)));
 
             if (result.getDeletedCount() > 0)
             {
@@ -495,8 +654,19 @@ public class MongoDBConnector extends BaseDBConnector
             return this.playerRecords.get(playerUUID);
         }
 
-        Document query = new Document("_id", playerUUID.toString());
-        Document user  = db.getCollection(COLLECTION_USERS).find(query).first();
+        Document user;
+
+        try
+        {
+            Document query = new Document("_id", playerUUID.toString());
+            user = db.getCollection(COLLECTION_USERS).find(query).first();
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to read player record.", ex);
+
+            return null;
+        }
 
         if (user != null)
         {
@@ -504,7 +674,7 @@ public class MongoDBConnector extends BaseDBConnector
                     playerUUID.toString(),
                     user.getString("name"),
                     user.getString("wallet"),
-                    user.getBoolean("frozen"));
+                    user.getBoolean("frozen", false));
 
             if (cacheRecord && !this.playerRecords.containsKey(playerUUID))
             {
@@ -524,30 +694,53 @@ public class MongoDBConnector extends BaseDBConnector
             return true;
         }
 
-        Document query = new Document("_id", playerUUID.toString());
+        try
+        {
+            Document query = new Document("_id", playerUUID.toString());
 
-        return db.getCollection(COLLECTION_USERS).find(query).first() != null;
+            return db.getCollection(COLLECTION_USERS).find(query).first() != null;
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to check for player record.", ex);
+
+            return false;
+        }
     }
 
     private void createUserCollectionIndex()
     {
-        db.getCollection(COLLECTION_USERS).createIndex(Indexes.hashed("name"));
+        try
+        {
+            db.getCollection(COLLECTION_USERS).createIndex(Indexes.hashed("name"));
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to create users index.", ex);
+        }
     }
 
     private List<PlayerRecord> queryPlayersByFrozen(boolean frozen)
     {
         List<PlayerRecord> records = new ArrayList<>();
 
-        Document query = new Document("frozen", frozen);
-        FindIterable<Document> queryResult = db.getCollection(COLLECTION_USERS).find(query);
-
-        for (Document user : queryResult)
+        try
         {
-            records.add(new PlayerRecord(
-                    user.getString("_id"),
-                    user.getString("name"),
-                    user.getString("wallet"),
-                    user.getBoolean("frozen")));
+            Document query = new Document("frozen", frozen);
+            FindIterable<Document> queryResult = db.getCollection(COLLECTION_USERS).find(query);
+
+            for (Document user : queryResult)
+            {
+                records.add(new PlayerRecord(
+                        user.getString("_id"),
+                        user.getString("name"),
+                        user.getString("wallet"),
+                        user.getBoolean("frozen", false)));
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to query players by frozen state.", ex);
         }
 
         return records;

@@ -176,8 +176,12 @@ public class BananoWebSocket
 
             if (!subscribed)
             {
-                // First watched account on this connection — subscribe now (includes this wallet).
-                sendSubscription(c);
+                // First watched account on this connection — subscribe now (includes this wallet,
+                // unless a concurrent unwatch already removed it).
+                if (!watchedAccounts.isEmpty())
+                {
+                    sendSubscription(c);
+                }
                 return;
             }
 

@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy.commands;
 
+import banano.bananominecraft.bananoeconomy.helpers.StringHelper;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 import banano.bananominecraft.bananoeconomy.services.NodeInfoService;
 import banano.bananominecraft.bananoeconomy.trackers.TaskTracker;
@@ -16,6 +17,9 @@ import java.util.logging.Level;
 
 public class NodeInfoCommand implements CommandExecutor
 {
+    /** Permission node (declared in plugin.yml, default: op) for seeing the node address. */
+    public static final String PERMISSION_NODE_IP = "BananoEconomy.nodeinfo.ip";
+
     private final JavaPlugin plugin;
     private final TaskTracker taskTracker;
     private final NodeInfoService nodeInfoService;
@@ -48,14 +52,14 @@ public class NodeInfoCommand implements CommandExecutor
                 if (sender instanceof Player || sender instanceof ConsoleCommandSender)
                 {
                     NodeInfoService.NodeInfo info = nodeInfoService.gather();
-                    String msg0 = "The node IP is: " + info.nodeUrl();
+                    String msg0 = "The node IP is: " + StringHelper.stripUrlUserInfo(info.nodeUrl());
                     String msg1 = "Checked blocks: " + info.checkedBlocks() + " - Unchecked blocks: " + info.uncheckedBlocks();
                     String msg2 = "The server wallet is " + info.masterWallet();
                     String msg3 = "It currently contains: " + info.balance();
 
                     if (sender instanceof Player player)
                     {
-                        if (sender.isOp())
+                        if (sender.hasPermission(PERMISSION_NODE_IP))
                         {
                             player.sendMessage(msg0);
                         }

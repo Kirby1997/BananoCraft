@@ -136,11 +136,28 @@ class I18nTest
     }
 
     @Test
-    void get_noArgs_overload_returnsValueWithoutFormatting()
+    void get_noArgs_overload_returnsPlainValue()
     {
         // Convenience overload with no varargs
         String result = i18n.get(Locale.ENGLISH, "history.no_records");
         assertEquals("No records found!", result);
+    }
+
+    @Test
+    void get_noArgs_escapedApostrophe_collapsesToSingle()
+    {
+        // join.wallet_error=Votre portefeuille BananoEconomy n''a pas pu être configuré! ...
+        // Must be formatted even without arguments so '' renders as a single '.
+        String result = i18n.get(Locale.FRANCE, "join.wallet_error");
+        assertTrue(result.contains("n'a pas"), result);
+        assertFalse(result.contains("''"), result);
+    }
+
+    @Test
+    void get_emptyVarargs_escapedApostrophe_collapsesToSingle()
+    {
+        String result = i18n.get(Locale.FRANCE, "join.wallet_error", new Object[0]);
+        assertTrue(result.contains("n'a pas"), result);
     }
 
     // -------------------------------------------------------------------------

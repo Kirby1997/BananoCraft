@@ -49,7 +49,10 @@ public class TipTabCompleter implements TabCompleter
             {
                 for(OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers())
                 {
-                    results.add(offlinePlayer.getName());
+                    if(offlinePlayer.getName() != null)
+                    {
+                        results.add(offlinePlayer.getName());
+                    }
                 }
             }
         }

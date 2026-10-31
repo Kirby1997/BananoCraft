@@ -68,12 +68,19 @@ public class I18n
             ResourceBundle bundle = ResourceBundle.getBundle(BUNDLE_NAME, locale, classLoader);
             String pattern = bundle.getString(key);
 
-            if (args == null || args.length == 0)
+            // Always format, even with no arguments, so escaped quotes ('') in the bundle
+            // collapse to a single ' consistently whether or not the message takes arguments.
+            Object[] formatArgs = args == null ? new Object[0] : args;
+
+            try
             {
+                return new MessageFormat(pattern, locale).format(formatArgs);
+            }
+            catch (IllegalArgumentException ex)
+            {
+                LOGGER.log(Level.WARNING, "Malformed i18n pattern for key ''{0}''", key);
                 return pattern;
             }
-
-            return new MessageFormat(pattern, locale).format(args);
         }
         catch (MissingResourceException ex)
         {

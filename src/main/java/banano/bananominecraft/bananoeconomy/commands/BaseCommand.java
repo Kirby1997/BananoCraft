@@ -56,7 +56,7 @@ public class BaseCommand
         }
         else if(configEngine.getEnableOfflinePayment())
         {
-            List<OfflinePlayer> matchingPlayers = Arrays.stream(Bukkit.getOfflinePlayers()).filter(x -> x.getName().equalsIgnoreCase(targetPlayerName)).toList();
+            List<OfflinePlayer> matchingPlayers = Arrays.stream(Bukkit.getOfflinePlayers()).filter(x -> x.getName() != null && x.getName().equalsIgnoreCase(targetPlayerName)).toList();
 
             if(matchingPlayers.size() == 1)
             {
