@@ -349,6 +349,9 @@ public class RPC
      * pending — the node reports an empty backlog as {@code "blocks": ""} (a bare string) rather
      * than an empty array, so a non-array response is treated the same as "nothing pending".
      */
+    /** Upper bound on pending blocks fetched (and therefore pocketed) per receive run. */
+    public static final int MAX_RECEIVABLE_PER_CALL = 25;
+
     public List<String> receivablePending(String account)
     {
         final JsonObject json_payload = new JsonObject();
@@ -358,6 +361,9 @@ public class RPC
         // explorers typically show a send as soon as it's broadcast — without this, a deposit
         // can be visible externally for a moment while still invisible to this call.
         json_payload.addProperty("include_active", true);
+        // Each returned block costs a node receive (with proof-of-work), and anyone can create
+        // pending blocks by sending dust to a public deposit address, so bound the batch.
+        json_payload.addProperty("count", String.valueOf(MAX_RECEIVABLE_PER_CALL));
 
         try
         {

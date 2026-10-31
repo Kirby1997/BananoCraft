@@ -318,6 +318,15 @@ class RPCTest
     }
 
     @Test
+    void receivablePending_boundsTheBatchSize() throws Exception
+    {
+        // Each block costs a node receive with proof-of-work and dust can be sent by anyone.
+        stubResponse("{\"blocks\":[\"HASH1\"]}");
+        rpc.receivablePending(SENDER);
+        verify(http).post(anyString(), contains("\"count\":\"" + RPC.MAX_RECEIVABLE_PER_CALL + "\""));
+    }
+
+    @Test
     void receivablePending_returnsEmpty_whenNodeReportsEmptyBacklogAsBareString() throws Exception
     {
         // The node reports "nothing pending" as a bare string rather than an empty array.

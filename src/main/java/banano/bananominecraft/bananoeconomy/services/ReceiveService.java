@@ -6,6 +6,8 @@ import banano.bananominecraft.bananoeconomy.io.RPC;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Framework-free core of the "receive pending" flow: pocket every not-yet-received deposit
@@ -24,6 +26,7 @@ public final class ReceiveService
 {
     private final RPC rpc;
     private final ConfigEngine configEngine;
+    private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
 
     public ReceiveService(RPC rpc, ConfigEngine configEngine)
     {
@@ -47,6 +50,25 @@ public final class ReceiveService
      * whatever was already received before the failure is still reported as received.</p>
      */
     public ReceiveResult receiveAllPending(String account, String walletId)
+    {
+        // One run per account at a time: repeated /receive must not start parallel walks of the
+        // same pending list (each block is a node receive with proof-of-work).
+        if (!inFlight.add(account))
+        {
+            return ReceiveResult.partiallyFailed(List.of(), "A receive is already in progress for this account.");
+        }
+
+        try
+        {
+            return receivePending(account, walletId);
+        }
+        finally
+        {
+            inFlight.remove(account);
+        }
+    }
+
+    private ReceiveResult receivePending(String account, String walletId)
     {
         List<String> pendingBlocks = rpc.receivablePending(account);
 
