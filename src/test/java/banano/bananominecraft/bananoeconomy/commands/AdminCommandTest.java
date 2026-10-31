@@ -145,6 +145,20 @@ class AdminCommandTest
         verifyNoInteractions(rpc);
     }
 
+    // --- freeze target resolution ---
+
+    @Test
+    void freeze_refusesNameMatchingSeveralPlayersByCase()
+    {
+        // Offline-mode servers can have names that differ only by case; never guess which to freeze.
+        server.addPlayer("Mallory");
+        server.addPlayer("mALLORY");
+
+        run("freeze", "MALLORY");
+
+        verify(economyFuncs, never()).freezePlayer(any(org.bukkit.OfflinePlayer.class));
+    }
+
     // --- setnode ---
 
     private static final String NEW_MASTER = "ban_3t6k35gi95xu6tergt6p69ck76ogmitsa8mnijtpxm9fkcm736xtoncuohr3";

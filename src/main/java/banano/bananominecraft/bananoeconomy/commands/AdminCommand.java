@@ -27,10 +27,16 @@ import org.bukkit.scheduler.BukkitRunnable;
 
 import java.net.URL;
 import java.text.DecimalFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class AdminCommand extends BaseCommand implements CommandExecutor
 {
@@ -621,9 +627,15 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         for (int index = 1; index < args.length; index++)
         {
             final String playerName = args[index];
-            Optional<OfflinePlayer> p = Arrays.stream(Bukkit.getOfflinePlayers())
-                    .filter(x -> x.getName() != null && x.getName().equalsIgnoreCase(playerName))
-                    .findFirst();
+            List<OfflinePlayer> matches = findKnownPlayers(playerName);
+
+            if (matches.size() > 1)
+            {
+                SendMessage(sender, String.format("%s matches more than one known player - use the exact name of an online player.", playerName), ChatColor.RED);
+                continue;
+            }
+
+            Optional<OfflinePlayer> p = matches.stream().findFirst();
 
             if (p == null || !p.isPresent())
             {
@@ -652,6 +664,26 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         }
     }
 
+    /**
+     * Every known player (online or offline) whose name matches case-insensitively, narrowed to the
+     * single case-sensitive match when there is exactly one. Callers must treat more than one result
+     * as ambiguous rather than pick one (names can differ only by case on offline-mode servers).
+     */
+    private List<OfflinePlayer> findKnownPlayers(String playerName)
+    {
+        Map<UUID, OfflinePlayer> known = new LinkedHashMap<>();
+
+        Stream.<OfflinePlayer>concat(Bukkit.getOnlinePlayers().stream(), Arrays.stream(Bukkit.getOfflinePlayers()))
+                .filter(x -> x.getName() != null && x.getName().equalsIgnoreCase(playerName))
+                .forEach(x -> known.putIfAbsent(x.getUniqueId(), x));
+
+        List<OfflinePlayer> exact = known.values().stream()
+                .filter(x -> x.getName().equals(playerName))
+                .collect(Collectors.toList());
+
+        return exact.size() == 1 ? exact : new ArrayList<>(known.values());
+    }
+
     private void unfreezePlayer(Player sender, String[] args)
     {
         // /be [freeze|unfreeze] [player1] [player2] ...
@@ -665,9 +697,15 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         for (int index = 1; index < args.length; index++)
         {
             final String playerName = args[index];
-            Optional<OfflinePlayer> p = Arrays.stream(Bukkit.getOfflinePlayers())
-                    .filter(x -> x.getName() != null && x.getName().equalsIgnoreCase(playerName))
-                    .findFirst();
+            List<OfflinePlayer> matches = findKnownPlayers(playerName);
+
+            if (matches.size() > 1)
+            {
+                SendMessage(sender, String.format("%s matches more than one known player - use the exact name of an online player.", playerName), ChatColor.RED);
+                continue;
+            }
+
+            Optional<OfflinePlayer> p = matches.stream().findFirst();
 
             if (p == null || !p.isPresent())
             {
