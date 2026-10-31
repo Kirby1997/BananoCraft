@@ -424,8 +424,10 @@ public class ConfigEngine
             config.set("bankWalletID", this.bankWalletId);
         }
 
+        // No reloadConfig() here: the in-memory config is authoritative and is the only runtime copy
+        // of the encrypted seeds, which save() never rewrites. Re-reading the file just written would
+        // let a torn or failed write silently drop them from every later save.
         this.plugin.saveConfig();
-        this.plugin.reloadConfig();
 
         return true;
     }

@@ -141,7 +141,8 @@ class ConfigEngineTest
         verify(config).set("allowofflinepayment", true);
         verify(config).set("websocketUrl", "wss://new");
         verify(plugin, atLeastOnce()).saveConfig();
-        verify(plugin).reloadConfig();
+        // Re-reading after a write would let a torn file drop the encrypted seeds from memory.
+        verify(plugin, never()).reloadConfig();
     }
 
     @Test
