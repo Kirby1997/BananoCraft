@@ -20,29 +20,59 @@ within the plugin's data folder.
 ## MongoDB
 Set up a free database from mongodb.com ([or host your own](https://docs.mongodb.com/manual/tutorial/install-mongodb-on-ubuntu/))
 
-* Create a database called "BananoCraft" 
-
-`use BananoCraft`
-
-* Create a collection in the database called "users"
-
-`db.createCollection("users")`
-
-* Find your [database connection URI](https://docs.mongodb.com/manual/reference/connection-string/) and put it in the BananoEconomy/config.yml file.
+* Find your [database connection URI](https://docs.mongodb.com/manual/reference/connection-string/) and put it in the BananoEconomy/config.yml file as `mongoURI`.
+* The plugin uses a database called `BananoCraft` and creates its collections
+  (`users`, `offlinepayments`, `banks`, `bank_members`) automatically on first use, so
+  nothing needs to be created by hand. The database user needs read/write access to it.
+* If MongoDB cannot be reached at startup (5 second timeout), the plugin logs a single
+  SEVERE error and **falls back to local JSON storage** for that run. Player records created
+  while in fallback mode are stored only in the JSON files — fix the connection and restart
+  as soon as possible.
 
 ## MySQL
 Set up a new MySQL database with a database user that can be used by the plugin.
 
-* Create a database called "BananoCraft"
+* Create a database called "BananoCraft".
 
-* Run the following SQL in the BananoCraft schema to create the users table:
- `CREATE TABLE IF NOT EXISTS users (
-      playerUUID     VARCHAR(75) NOT NULL UNIQUE,
-      name           VARCHAR(50) NOT NULL,
-      wallet         VARCHAR(100) NOT NULL,
-      frozen         BOOLEAN NOT NULL DEFAULT FALSE,
-      PRIMARY KEY (playerUUID)
-  )  ENGINE=INNODB;`
+* The plugin creates all of its tables automatically on startup (`CREATE TABLE IF NOT EXISTS`),
+  so the database user needs the `CREATE` privilege on the schema in addition to
+  `SELECT`, `INSERT`, `UPDATE` and `DELETE`. If you prefer not to grant `CREATE`, run the
+  following SQL in the BananoCraft schema yourself before the first start:
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+    playerUUID  VARCHAR(75)  NOT NULL UNIQUE,
+    name        VARCHAR(50)  NOT NULL,
+    wallet      VARCHAR(100) NOT NULL,
+    frozen      BOOLEAN      NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (playerUUID)
+) ENGINE=INNODB;
+
+CREATE TABLE IF NOT EXISTS offlinepayments (
+    id             INT          NOT NULL AUTO_INCREMENT,
+    playerUUID     VARCHAR(75)  NOT NULL,
+    fromplayername VARCHAR(50)  NOT NULL,
+    amount         DOUBLE       NOT NULL,
+    blockhash      VARCHAR(250) NOT NULL,
+    message        VARCHAR(250) NOT NULL,
+    transdate      TIMESTAMP    NOT NULL,
+    PRIMARY KEY (id)
+) ENGINE=INNODB;
+
+CREATE TABLE IF NOT EXISTS banks (
+    bank_name   VARCHAR(100) NOT NULL,
+    address     VARCHAR(100) NOT NULL,
+    owner_uuid  VARCHAR(75)  NOT NULL,
+    created_at  BIGINT       NOT NULL,
+    PRIMARY KEY (bank_name)
+) ENGINE=INNODB;
+
+CREATE TABLE IF NOT EXISTS bank_members (
+    bank_name   VARCHAR(100) NOT NULL,
+    player_uuid VARCHAR(75)  NOT NULL,
+    PRIMARY KEY (bank_name, player_uuid)
+) ENGINE=INNODB;
+```
 
 * Add the MySQL connection details to the config.yml file:
   - `mysqlServerName: "dbservername"`
@@ -77,6 +107,29 @@ This is necessary when restoring backups etc.
 You may set `walletId` to the ID of the wallet created by your `wallet_create` RPC call to specify specific wallet on the node.
 Doing so allows you to use previously created wallet.
 Of course, the specified node should contain the wallet ID and the wallet has to contain the specified master account.
+
+If `walletSeed` is empty but `walletID` is set, the plugin will **not** generate a new seed
+(it would not match the existing node wallet); set `walletSeed` to that wallet's seed instead.
+A new seed is only generated on a fresh install where both are unset. The generated seed is
+written to `seed-backup.txt` (readable only by the server's OS user) — copy it somewhere safe
+offline and delete the file. Keep `secret.key` together with `config.yml` in your backups: the
+seed in `config.yml` is encrypted with it.
+
+## Troubleshooting
+
+* **Wallet / send RPC calls fail with "RPC control is disabled"** (issue #8): BananoCraft uses
+  wallet RPC actions, so the node must have `enable_control = true` in the `[rpc]` section of
+  its `config-rpc.toml` (or `rpc.enable_control: true` in older `config.json` files). Only
+  expose such a node's RPC port to the Minecraft server, never to the internet.
+* **Moving to a new node** (issue #7): re-create the wallet on the new node from your seed
+  (`wallet_create` with the hex seed) and update `walletID` (see the seed backup file for
+  steps). Player accounts are derived from the seed, so they come back too. If a player's stored
+  wallet address is not valid on the new node's wallet, a new wallet is created for that player
+  the next time they join and their record is updated — any balance on the old address must be
+  recovered from the old seed/node.
+* **MongoDB driver spams the console**: the driver's own logging is lowered to WARN at startup.
+  If it is still noisy on your server, set the `org.mongodb.driver` logger to `WARN` in your
+  server's Log4j2 configuration.
 
 ## Representatives
 

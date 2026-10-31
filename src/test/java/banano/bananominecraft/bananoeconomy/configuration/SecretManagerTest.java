@@ -4,9 +4,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class SecretManagerTest
 {
@@ -160,5 +164,52 @@ class SecretManagerTest
         // a garbage seed.  It must return null so the caller triggers a SEVERE log.
         String encrypted = manager().encrypt(SEED);
         assertNull(noKey.decrypt(encrypted));
+    }
+
+    @Test
+    void EncryptReturnsNullWhenNotReady()
+    {
+        File dirAsKeyFile = new File(tempDir, "not-a-file");
+        dirAsKeyFile.mkdirs();
+        SecretManager noKey = new SecretManager(dirAsKeyFile, LOG);
+
+        // Must never hand back the plaintext, or callers could persist an unencrypted seed.
+        assertNull(noKey.encrypt(SEED));
+    }
+
+    // -------------------------------------------------------------------------
+    // Key file handling
+    // -------------------------------------------------------------------------
+
+    @Test
+    void WrongLengthKeyIsRenamedNotOverwritten() throws Exception
+    {
+        File keyFile = new File(tempDir, "secret.key");
+        byte[] badKey = new byte[] {1, 2, 3};
+        Files.write(keyFile.toPath(), badKey);
+
+        SecretManager sm = new SecretManager(keyFile, LOG);
+
+        assertFalse(sm.isReady(), "A wrong-length key must not be silently replaced");
+        assertNull(sm.encrypt(SEED));
+        assertFalse(keyFile.exists(), "The bad key must be moved aside");
+
+        File[] moved = tempDir.listFiles((dir, name) -> name.startsWith("secret.key.bad-"));
+        assertNotNull(moved);
+        assertEquals(1, moved.length);
+        assertArrayEquals(badKey, Files.readAllBytes(moved[0].toPath()), "Original bytes must be preserved");
+    }
+
+    @Test
+    void GeneratedKeyIsOwnerOnly() throws Exception
+    {
+        File keyFile = new File(tempDir, "secret.key");
+        assumeTrue(keyFile.toPath().getFileSystem().supportedFileAttributeViews().contains("posix"));
+
+        new SecretManager(keyFile, LOG);
+
+        assertEquals(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                Files.getPosixFilePermissions(keyFile.toPath()));
+        assertEquals(32, keyFile.length());
     }
 }

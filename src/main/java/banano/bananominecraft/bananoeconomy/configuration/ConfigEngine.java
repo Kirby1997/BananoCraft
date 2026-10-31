@@ -5,6 +5,9 @@ import org.bukkit.plugin.Plugin;
 
 import java.io.File;
 import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Collections;
@@ -33,6 +36,7 @@ public class ConfigEngine
     public static final int DEFAULT_HISTORY_TRANSACTIONS = 10;
 
     private static final String SEED_PLACEHOLDER      = "INSERT WALLET SEED HERE";
+    private static final String WALLET_ID_PLACEHOLDER = "INSERT WALLET ID FROM NODE HERE";
     private static final String BANK_SEED_PLACEHOLDER = "INSERT BANK WALLET SEED HERE";
     private static final String SEED_BACKUP_FILENAME  = "seed-backup.txt";
 
@@ -89,7 +93,7 @@ public class ConfigEngine
         }
 
         this.nodeAddress = configuration.getString("IP", "");
-        plugin.getLogger().info("Node address: " + this.nodeAddress);
+        plugin.getLogger().info("Node address: " + redactUserInfo(this.nodeAddress));
 
         this.multiplier = configuration.getString("multiplier", "100000000000000000000000000000");
         this.walletId   = configuration.getString("walletID", "");
@@ -97,21 +101,52 @@ public class ConfigEngine
         // --- player wallet seed ---
         boolean seedJustGenerated = false;
         String rawSeed = configuration.getString("walletSeed", "");
-        if (rawSeed.isEmpty() || rawSeed.equals(SEED_PLACEHOLDER))
+        boolean seedMissing = rawSeed.isEmpty() || rawSeed.equals(SEED_PLACEHOLDER);
+        if (seedMissing && isWalletIdUnset(this.walletId))
         {
-            // No seed provided — generate one now and write a backup file the admin must secure.
-            rawSeed = generateSeed();
-            configuration.set("walletSeed", secretManager.encrypt(rawSeed));
-            plugin.saveConfig();
-            this.walletSeed = rawSeed;
-            writeSeedBackupFile(rawSeed);
-            seedJustGenerated = true;
+            // Fresh install — generate a seed now and write a backup file the admin must secure.
+            String generated = generateSeed();
+            String encrypted = secretManager.encrypt(generated);
+            if (encrypted == null)
+            {
+                // Never persist a plaintext seed, and never use a seed that exists nowhere on disk.
+                plugin.getLogger().severe(
+                        "Could not encrypt a newly generated walletSeed (secret.key unavailable) — no seed "
+                        + "was generated or saved. Fix secret.key (see earlier errors) and restart.");
+                this.walletSeed = "";
+            }
+            else
+            {
+                configuration.set("walletSeed", encrypted);
+                plugin.saveConfig();
+                this.walletSeed = generated;
+                writeSeedBackupFile(generated);
+                seedJustGenerated = true;
+            }
+        }
+        else if (seedMissing)
+        {
+            // A wallet already exists on the node; a new random seed would not match it.
+            plugin.getLogger().warning(
+                    "walletSeed is not set but walletID is configured — not generating a new seed. "
+                    + "Set walletSeed to the seed of the existing node wallet.");
+            this.walletSeed = "";
         }
         else if (secretManager.needsEncryption(rawSeed, SEED_PLACEHOLDER))
         {
-            plugin.getLogger().info("Encrypting walletSeed in config.yml...");
-            configuration.set("walletSeed", secretManager.encrypt(rawSeed));
-            plugin.saveConfig();
+            String encrypted = secretManager.encrypt(rawSeed);
+            if (encrypted != null)
+            {
+                plugin.getLogger().info("Encrypting walletSeed in config.yml...");
+                configuration.set("walletSeed", encrypted);
+                plugin.saveConfig();
+            }
+            else
+            {
+                plugin.getLogger().severe(
+                        "walletSeed could not be encrypted (secret.key unavailable) — it remains in "
+                        + "plaintext in config.yml. Fix secret.key and restart.");
+            }
             this.walletSeed = rawSeed;
         }
         else if (secretManager.isEncrypted(rawSeed))
@@ -134,9 +169,19 @@ public class ConfigEngine
         String rawBankSeed = configuration.getString("bankWalletSeed", "");
         if (secretManager.needsEncryption(rawBankSeed, BANK_SEED_PLACEHOLDER))
         {
-            plugin.getLogger().info("Encrypting bankWalletSeed in config.yml...");
-            configuration.set("bankWalletSeed", secretManager.encrypt(rawBankSeed));
-            plugin.saveConfig();
+            String encrypted = secretManager.encrypt(rawBankSeed);
+            if (encrypted != null)
+            {
+                plugin.getLogger().info("Encrypting bankWalletSeed in config.yml...");
+                configuration.set("bankWalletSeed", encrypted);
+                plugin.saveConfig();
+            }
+            else
+            {
+                plugin.getLogger().severe(
+                        "bankWalletSeed could not be encrypted (secret.key unavailable) — it remains in "
+                        + "plaintext in config.yml. Fix secret.key and restart.");
+            }
             this.bankWalletSeed = rawBankSeed;
         }
         else if (secretManager.isEncrypted(rawBankSeed))
@@ -186,7 +231,7 @@ public class ConfigEngine
         plugin.getLogger().info("Maximum Transaction History Count: " + this.maximumTransactionHistoryCount);
 
         this.websocketUrl = configuration.getString("websocketUrl", "wss://ws.banano.trade");
-        plugin.getLogger().info("WebSocket URL: " + this.websocketUrl);
+        plugin.getLogger().info("WebSocket URL: " + redactUserInfo(this.websocketUrl));
 
         this.representatives = configuration.getStringList("representatives");
         if (!this.representatives.isEmpty())
@@ -208,6 +253,25 @@ public class ConfigEngine
     // Seed generation and backup
     // -------------------------------------------------------------------------
 
+    private static boolean isWalletIdUnset(String walletId)
+    {
+        return walletId == null || walletId.isBlank() || walletId.equalsIgnoreCase(WALLET_ID_PLACEHOLDER);
+    }
+
+    /**
+     * Replace any {@code user:password@} credentials in a URL with {@code ***@}
+     * so it can be logged safely.
+     */
+    static String redactUserInfo(String url)
+    {
+        if (url == null)
+        {
+            return null;
+        }
+
+        return url.replaceFirst("^([A-Za-z][A-Za-z0-9+.-]*://)?[^/@\\s]+@", "$1***@");
+    }
+
     private static String generateSeed()
     {
         byte[] bytes = new byte[32];
@@ -218,12 +282,20 @@ public class ConfigEngine
     private void writeSeedBackupFile(String walletSeedHex)
     {
         File backupFile = new File(plugin.getDataFolder(), SEED_BACKUP_FILENAME);
+        if (backupFile.exists())
+        {
+            // Never overwrite an earlier backup — it may hold a seed that still controls funds.
+            backupFile = new File(plugin.getDataFolder(),
+                    "seed-backup-" + System.currentTimeMillis() + ".txt");
+        }
+
         try
         {
             plugin.getDataFolder().mkdirs();
             String mnemonic = new Bip39().toMnemonic(HexFormat.of().parseHex(walletSeedHex));
 
-            try (PrintWriter w = new PrintWriter(backupFile, "UTF-8"))
+            StringWriter content = new StringWriter();
+            try (PrintWriter w = new PrintWriter(content))
             {
                 w.println("=================================================================");
                 w.println(" BananoCraft — Wallet Seed Backup");
@@ -282,13 +354,20 @@ public class ConfigEngine
                 w.println("=================================================================");
             }
 
+            // Created owner-only from the start so the seed is never world-readable.
+            SecretManager.createOwnerOnlyFile(backupFile.toPath());
+            Files.writeString(backupFile.toPath(), content.toString(), StandardCharsets.UTF_8);
+
             plugin.getLogger().severe(
                     "Seed backup written to: " + backupFile.getAbsolutePath());
         }
         catch (Exception e)
         {
+            // Never log the seed itself: server logs are routinely shared and uploaded.
             plugin.getLogger().severe(
-                    "FAILED to write seed backup file — copy this seed manually: " + walletSeedHex);
+                    "FAILED to write the seed backup file (" + e.getClass().getSimpleName() + ": " + e.getMessage()
+                    + "). The new seed is stored ENCRYPTED in config.yml — back up config.yml together "
+                    + "with secret.key now, or the wallet cannot be recovered.");
         }
     }
 

@@ -10,14 +10,17 @@ import org.mockito.quality.Strictness;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.Mockito.*;
 
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -468,5 +471,138 @@ class ConfigEngineTest
         assertTrue(captured.stream().anyMatch(r ->
                 r.getLevel() == Level.SEVERE && r.getMessage().contains("walletSeed")),
                 "a SEVERE log about walletSeed decryption failure must be emitted");
+    }
+
+    // -------------------------------------------------------------------------
+    // Seed safety
+    // -------------------------------------------------------------------------
+
+    private List<LogRecord> captureLogs(Runnable action)
+    {
+        Logger logger = Logger.getLogger("test");
+        List<LogRecord> captured = new ArrayList<>();
+        Handler captor = new Handler()
+        {
+            @Override public void publish(LogRecord r) { captured.add(r); }
+            @Override public void flush() {}
+            @Override public void close() {}
+        };
+        logger.addHandler(captor);
+        try
+        {
+            action.run();
+        }
+        finally
+        {
+            logger.removeHandler(captor);
+        }
+        return captured;
+    }
+
+    @Test
+    void WalletSeedNotGenerated_whenWalletIdAlreadySet()
+    {
+        when(config.getString("walletID", "")).thenReturn("EXISTING-WALLET-ID");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals("", engine.getWalletSeed());
+        verify(config, never()).set(eq("walletSeed"), any());
+        assertFalse(new File(tempDir, "seed-backup.txt").exists(),
+                "No backup must be written for a seed that was never generated");
+    }
+
+    @Test
+    void WalletSeedGenerated_whenWalletIdIsPlaceholder()
+    {
+        when(config.getString("walletID", "")).thenReturn("INSERT WALLET ID FROM NODE HERE");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals(64, engine.getWalletSeed().length());
+    }
+
+    @Test
+    void WalletSeedBackupFileIsOwnerOnly() throws Exception
+    {
+        assumeTrue(tempDir.toPath().getFileSystem().supportedFileAttributeViews().contains("posix"));
+
+        new ConfigEngine(plugin);
+
+        assertEquals(Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE),
+                Files.getPosixFilePermissions(new File(tempDir, "seed-backup.txt").toPath()));
+    }
+
+    @Test
+    void WalletSeedExistingBackupFileIsNotOverwritten() throws Exception
+    {
+        File existing = new File(tempDir, "seed-backup.txt");
+        Files.writeString(existing.toPath(), "OLD BACKUP");
+
+        new ConfigEngine(plugin);
+
+        assertEquals("OLD BACKUP", Files.readString(existing.toPath()));
+        File[] others = tempDir.listFiles((dir, name) -> name.startsWith("seed-backup-") && name.endsWith(".txt"));
+        assertNotNull(others);
+        assertEquals(1, others.length, "The new seed must be backed up to a separate file");
+    }
+
+    @Test
+    void WalletSeedIsNeverLogged()
+    {
+        ConfigEngine[] holder = new ConfigEngine[1];
+        List<LogRecord> logs = captureLogs(() -> holder[0] = new ConfigEngine(plugin));
+
+        String seed = holder[0].getWalletSeed();
+        assertTrue(logs.stream().noneMatch(r -> r.getMessage() != null && r.getMessage().contains(seed)),
+                "The seed must never appear in the server log");
+    }
+
+    @Test
+    void PlaintextSeedNotSaved_whenKeyUnusable() throws Exception
+    {
+        // A wrong-length key makes SecretManager not ready.
+        Files.write(new File(tempDir, "secret.key").toPath(), new byte[] {1, 2, 3});
+        String plainSeed = "AABBCCDD00112233AABBCCDD00112233AABBCCDD00112233AABBCCDD00112233";
+        when(config.getString("walletSeed", "")).thenReturn(plainSeed);
+
+        List<LogRecord> logs = captureLogs(() -> new ConfigEngine(plugin));
+
+        verify(config, never()).set(eq("walletSeed"), any());
+        assertTrue(logs.stream().anyMatch(r -> r.getLevel() == Level.SEVERE
+                && r.getMessage().contains("walletSeed")));
+    }
+
+    @Test
+    void GeneratedSeedNotSaved_whenKeyUnusable() throws Exception
+    {
+        Files.write(new File(tempDir, "secret.key").toPath(), new byte[] {1, 2, 3});
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        verify(config, never()).set(eq("walletSeed"), any());
+        assertEquals("", engine.getWalletSeed());
+        assertFalse(new File(tempDir, "seed-backup.txt").exists());
+    }
+
+    @Test
+    void NodeAddressCredentialsAreRedactedInLog()
+    {
+        when(config.getString("IP", "")).thenReturn("http://rpcuser:hunter2@node:7072");
+
+        List<LogRecord> logs = captureLogs(() -> new ConfigEngine(plugin));
+
+        assertTrue(logs.stream().noneMatch(r -> r.getMessage() != null && r.getMessage().contains("hunter2")));
+        assertTrue(logs.stream().anyMatch(r -> r.getMessage() != null
+                && r.getMessage().contains("http://***@node:7072")));
+    }
+
+    @Test
+    void redactUserInfo_leavesPlainUrlsUntouched()
+    {
+        assertEquals("http://node:7072", ConfigEngine.redactUserInfo("http://node:7072"));
+        assertEquals("https://***@host/path", ConfigEngine.redactUserInfo("https://u:p@host/path"));
+        assertEquals("", ConfigEngine.redactUserInfo(""));
+        assertNull(ConfigEngine.redactUserInfo(null));
     }
 }
