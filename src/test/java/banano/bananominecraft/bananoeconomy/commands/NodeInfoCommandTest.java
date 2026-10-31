@@ -81,4 +81,36 @@ class NodeInfoCommandTest
         verify(rpc).getBlockCount();
         verify(rpc, atLeastOnce()).getMasterWallet();
     }
+
+    @Test
+    void playerWithIpPermission_seesNodeUrlWithoutCredentials() throws Exception
+    {
+        when(rpc.getURL()).thenReturn(new URL("http://user:secret@node:7072"));
+        PlayerMock player = server.addPlayer("Viewer");
+        player.addAttachment(plugin, NodeInfoCommand.PERMISSION_NODE_IP, true);
+
+        command.onCommand(player, null, "nodeinfo", new String[0]);
+        server.getScheduler().waitAsyncTasksFinished();
+
+        String first = player.nextMessage();
+        org.junit.jupiter.api.Assertions.assertNotNull(first);
+        org.junit.jupiter.api.Assertions.assertTrue(first.contains("http://node:7072"), first);
+        org.junit.jupiter.api.Assertions.assertFalse(first.contains("secret"), first);
+    }
+
+    @Test
+    void playerWithoutIpPermission_doesNotSeeNodeUrl()
+    {
+        PlayerMock player = server.addPlayer("Peasant");
+        player.addAttachment(plugin, NodeInfoCommand.PERMISSION_NODE_IP, false);
+
+        command.onCommand(player, null, "nodeinfo", new String[0]);
+        server.getScheduler().waitAsyncTasksFinished();
+
+        String message;
+        while ((message = player.nextMessage()) != null)
+        {
+            org.junit.jupiter.api.Assertions.assertFalse(message.contains("node:7072"), message);
+        }
+    }
 }

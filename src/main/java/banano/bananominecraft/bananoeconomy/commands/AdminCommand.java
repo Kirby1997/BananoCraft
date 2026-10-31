@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy.commands;
 
+import banano.bananominecraft.bananoeconomy.helpers.StringHelper;
 import banano.bananominecraft.bananoeconomy.io.BananoWebSocket;
 import banano.bananominecraft.bananoeconomy.io.EconomyFuncs;
 import banano.bananominecraft.bananoeconomy.io.RPC;
@@ -773,7 +774,7 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         configEngine.setNodeAddress(newNodeAddress);
         configEngine.save();
 
-        SendMessage(sender, "The node address has been set to '" + newNodeAddress + "'.", ChatColor.GREEN);
+        SendMessage(sender, "The node address has been set to '" + StringHelper.stripUrlUserInfo(newNodeAddress) + "'.", ChatColor.GREEN);
 
         // Everything below talks to the (possibly new and slow/unreachable) node, so it runs
         // off the main thread. Config writes and replies hop back to the main thread.

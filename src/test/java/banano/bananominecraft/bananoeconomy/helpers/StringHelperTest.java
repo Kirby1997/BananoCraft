@@ -118,4 +118,33 @@ class StringHelperTest
     {
         assertEquals("Hello", StringHelper.right("Hello", 5));
     }
+
+    // -------------------------------------------------------------------------
+    // stripUrlUserInfo — never show node credentials to players
+    // -------------------------------------------------------------------------
+
+    @Test
+    void stripUrlUserInfo_removesCredentials()
+    {
+        assertEquals("https://node.example:7072/rpc",
+                StringHelper.stripUrlUserInfo("https://user:pa55@node.example:7072/rpc"));
+    }
+
+    @Test
+    void stripUrlUserInfo_noCredentials_unchanged()
+    {
+        assertEquals("http://node:7072", StringHelper.stripUrlUserInfo("http://node:7072"));
+    }
+
+    @Test
+    void stripUrlUserInfo_atSignInPath_unchanged()
+    {
+        assertEquals("http://node:7072/a@b", StringHelper.stripUrlUserInfo("http://node:7072/a@b"));
+    }
+
+    @Test
+    void stripUrlUserInfo_null_returnsNull()
+    {
+        assertNull(StringHelper.stripUrlUserInfo(null));
+    }
 }

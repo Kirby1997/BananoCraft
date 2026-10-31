@@ -69,4 +69,17 @@ class DBConnectorFactoryTest
         assertInstanceOf(JsonDBConnector.class, connector);
         connector.close();
     }
+
+    @Test
+    void fallsBackToJson_whenMongoUriIsInvalid()
+    {
+        // An unparseable URI fails inside the MongoDBConnector constructor without
+        // any network access, exercising the factory's JSON fallback path.
+        plugin.getConfig().set("mongoURI", "not-a-mongo-uri");
+
+        IDBConnector connector = DBConnectorFactory.create(plugin);
+
+        assertInstanceOf(JsonDBConnector.class, connector);
+        connector.close();
+    }
 }
