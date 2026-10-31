@@ -99,10 +99,17 @@ public class EconomyFuncs
     {
         if (playerRecord != null)
         {
+            boolean previous = playerRecord.isFrozen();
             playerRecord.setFrozen(true);
-            this.db.updatePlayerRecord(playerRecord);
 
-            return true;
+            if (this.db.updatePlayerRecord(playerRecord))
+            {
+                return true;
+            }
+
+            // Persisting failed: roll back the in-memory (cached) state so it matches the DB.
+            playerRecord.setFrozen(previous);
+            plugin.getLogger().warning("Failed to persist freeze state for " + playerRecord.getPlayerName());
         }
 
         return false;
@@ -122,7 +129,7 @@ public class EconomyFuncs
 
             for (OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers())
             {
-                if (offlinePlayer.getName().equalsIgnoreCase(playerName))
+                if (offlinePlayer.getName() != null && offlinePlayer.getName().equalsIgnoreCase(playerName))
                 {
                     offlinePlayers.add(offlinePlayer);
                 }
@@ -166,10 +173,17 @@ public class EconomyFuncs
     {
         if (playerRecord != null)
         {
+            boolean previous = playerRecord.isFrozen();
             playerRecord.setFrozen(false);
-            this.db.updatePlayerRecord(playerRecord);
 
-            return true;
+            if (this.db.updatePlayerRecord(playerRecord))
+            {
+                return true;
+            }
+
+            // Persisting failed: roll back the in-memory (cached) state so it matches the DB.
+            playerRecord.setFrozen(previous);
+            plugin.getLogger().warning("Failed to persist unfreeze state for " + playerRecord.getPlayerName());
         }
 
         return false;
@@ -189,7 +203,7 @@ public class EconomyFuncs
 
             for (OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers())
             {
-                if (offlinePlayer.getName().equalsIgnoreCase(playerName))
+                if (offlinePlayer.getName() != null && offlinePlayer.getName().equalsIgnoreCase(playerName))
                 {
                     offlinePlayers.add(offlinePlayer);
                 }
@@ -354,22 +368,10 @@ public class EconomyFuncs
         {
             if (!this.db.hasPlayerRecord(player))
             {
-                String wallet = rpc.accountCreate(-1);
+                String wallet = createUniqueWallet(player);
 
-                if (!wallet.equalsIgnoreCase(RPC.ACCOUNT_CREATION_FAILED))
+                if (wallet != null)
                 {
-                    int retries = 0;
-                    while (this.db.isAlreadyAssignedToOtherPlayer(wallet, player))
-                    {
-                        if (++retries >= MAX_WALLET_RETRIES)
-                        {
-                            plugin.getLogger().severe("Could not find a unique wallet for " + playerName
-                                    + " after " + MAX_WALLET_RETRIES + " attempts — aborting.");
-                            return false;
-                        }
-                        wallet = rpc.accountCreate(-1);
-                    }
-
                     PlayerRecord playerRecord = this.db.createPlayerRecord(player, wallet);
 
                     if (playerRecord != null)
@@ -393,8 +395,24 @@ public class EconomyFuncs
 
                 if (playerRecord != null)
                 {
-                    plugin.getLogger().info("Player wallet loaded for " + playerName);
-                    return true;
+                    if (isUsableWallet(playerRecord.getWallet()))
+                    {
+                        plugin.getLogger().info("Player wallet loaded for " + playerName);
+                        return true;
+                    }
+
+                    // Legacy/broken record: an earlier failed creation stored the sentinel (or some
+                    // other invalid address) as the wallet. Repair it with a fresh account.
+                    plugin.getLogger().warning("Stored wallet for " + playerName + " is invalid - creating a new one.");
+                    String wallet = createUniqueWallet(player);
+
+                    if (wallet != null && this.db.updatePlayerWallet(player, wallet))
+                    {
+                        plugin.getLogger().info("Repaired wallet for " + playerName);
+                        return true;
+                    }
+
+                    plugin.getLogger().warning("Could not repair wallet for " + playerName + "!");
                 }
                 else
                 {
@@ -408,6 +426,51 @@ public class EconomyFuncs
         }
 
         return false;
+    }
+
+    /** True if the address is a well-formed Banano address and not the creation-failure sentinel. */
+    private static boolean isUsableWallet(String wallet)
+    {
+        return wallet != null
+                && !wallet.equalsIgnoreCase(RPC.ACCOUNT_CREATION_FAILED)
+                && Validator.validateAddress(wallet);
+    }
+
+    /**
+     * Creates a new node account that is valid and not assigned to any other player.
+     * Returns null (after logging a warning) if creation fails or no unique account is found.
+     */
+    private String createUniqueWallet(Player player)
+    {
+        String playerName = player.getName();
+        String wallet = rpc.accountCreate(-1);
+
+        if (!isUsableWallet(wallet))
+        {
+            plugin.getLogger().warning("Account creation failed for " + playerName + ": " + wallet);
+            return null;
+        }
+
+        int retries = 0;
+        while (this.db.isAlreadyAssignedToOtherPlayer(wallet, player))
+        {
+            if (++retries >= MAX_WALLET_RETRIES)
+            {
+                plugin.getLogger().severe("Could not find a unique wallet for " + playerName
+                        + " after " + MAX_WALLET_RETRIES + " attempts — aborting.");
+                return null;
+            }
+
+            wallet = rpc.accountCreate(-1);
+
+            if (!isUsableWallet(wallet))
+            {
+                plugin.getLogger().warning("Account creation failed for " + playerName + ": " + wallet);
+                return null;
+            }
+        }
+
+        return wallet;
     }
 
     public void unloadAccount(Player player)
