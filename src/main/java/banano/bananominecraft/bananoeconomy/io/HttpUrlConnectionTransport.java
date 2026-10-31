@@ -1,8 +1,8 @@
 package banano.bananominecraft.bananoeconomy.io;
 
-import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -23,6 +23,10 @@ public class HttpUrlConnectionTransport implements HttpTransport
     // caps the worst case rather than leaving it open-ended.
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 15_000;
+    // The read timeout only bounds silence between reads, so also bound the whole response:
+    // a slow or hostile node must not hold a caller (or a wallet lock) or memory indefinitely.
+    private static final long TOTAL_DEADLINE_MS = 30_000;
+    private static final int MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
     @Override
     public String post(String url, String jsonPayload) throws IOException
@@ -33,6 +37,8 @@ public class HttpUrlConnectionTransport implements HttpTransport
         con.setRequestProperty("Accept", "application/json");
         con.setConnectTimeout(CONNECT_TIMEOUT_MS);
         con.setReadTimeout(READ_TIMEOUT_MS);
+        // Never let a response redirect a request (some carry the wallet seed) to another host.
+        con.setInstanceFollowRedirects(false);
         con.setDoOutput(true);
 
         // Write request — let the exception propagate so callers don't attempt
@@ -43,17 +49,31 @@ public class HttpUrlConnectionTransport implements HttpTransport
             os.write(input, 0, input.length);
         }
 
-        StringBuilder response = new StringBuilder();
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(con.getInputStream(), StandardCharsets.UTF_8)))
+        long deadline = System.nanoTime() + TOTAL_DEADLINE_MS * 1_000_000L;
+        ByteArrayOutputStream response = new ByteArrayOutputStream();
+        try (InputStream in = con.getInputStream())
         {
-            String responseLine;
-            while ((responseLine = br.readLine()) != null)
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = in.read(buffer)) != -1)
             {
-                response.append(responseLine.trim());
+                response.write(buffer, 0, read);
+
+                if (response.size() > MAX_RESPONSE_BYTES)
+                {
+                    throw new IOException("Node response exceeded " + MAX_RESPONSE_BYTES + " bytes");
+                }
+                if (System.nanoTime() > deadline)
+                {
+                    throw new IOException("Node response exceeded " + TOTAL_DEADLINE_MS + " ms");
+                }
             }
         }
+        finally
+        {
+            con.disconnect();
+        }
 
-        return response.toString();
+        return response.toString(StandardCharsets.UTF_8).trim();
     }
 }
