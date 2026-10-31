@@ -91,7 +91,12 @@ public class EconomyFuncs
 
     public boolean freezePlayer(OfflinePlayer player)
     {
-        PlayerRecord playerRecord = this.db.getOfflinePlayerRecord(player);
+        // An online player's record is cached and is what the frozen checks read: change that
+        // instance, never a separate copy that a concurrent load could overwrite.
+        Player online = player.getPlayer();
+        PlayerRecord playerRecord = online != null
+                ? this.db.getPlayerRecord(online)
+                : this.db.getOfflinePlayerRecord(player);
 
         if (playerRecord != null)
         {
@@ -165,7 +170,12 @@ public class EconomyFuncs
 
     public boolean unfreezePlayer(OfflinePlayer player)
     {
-        PlayerRecord playerRecord = this.db.getOfflinePlayerRecord(player);
+        // An online player's record is cached and is what the frozen checks read: change that
+        // instance, never a separate copy that a concurrent load could overwrite.
+        Player online = player.getPlayer();
+        PlayerRecord playerRecord = online != null
+                ? this.db.getPlayerRecord(online)
+                : this.db.getOfflinePlayerRecord(player);
 
         if (playerRecord != null)
         {

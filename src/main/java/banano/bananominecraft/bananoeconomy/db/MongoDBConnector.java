@@ -675,9 +675,15 @@ public class MongoDBConnector extends BaseDBConnector
                     user.getString("wallet"),
                     user.getBoolean("frozen", false));
 
-            if (cacheRecord && !this.playerRecords.containsKey(playerUUID))
+            if (cacheRecord)
             {
-                this.playerRecords.put(playerUUID, record);
+                // One instance per player: a concurrent load must not replace a record that
+                // something else (e.g. a freeze) is already using.
+                PlayerRecord cached = this.playerRecords.putIfAbsent(playerUUID, record);
+                if (cached != null)
+                {
+                    record = cached;
+                }
             }
 
             return record;
