@@ -27,10 +27,13 @@ public interface IDBConnector
      */
     boolean updatePlayerWallet(Player player, String wallet);
     PlayerRecord createPlayerRecord(Player player, String walletAddress);
+    /** @throws IllegalStateException if the database cannot answer (never guesses "not assigned"). */
     boolean isAlreadyAssignedToOtherPlayer(String walletAddress, Player currentPlayer);
     void unloadPlayerRecord(Player player);
 
+    /** @throws IllegalStateException if the database cannot answer (never guesses "no record"). */
     boolean hasPlayerRecord(Player player);
+    /** @throws IllegalStateException if the database cannot answer (never guesses "no record"). */
     boolean hasPlayerRecord(OfflinePlayer player);
 
     // -------------------------------------------------------------------------

@@ -638,6 +638,17 @@ class EconomyFuncsTest {
     }
 
     @Test
+    void accountCreate_databaseUnavailable_createsNoNodeAccount() {
+        // A DB that cannot answer must not be read as "no record": that would issue an
+        // orphaned node account on every join during an outage.
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenThrow(new IllegalStateException("Database unavailable"));
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(rpc, never()).accountCreate(anyInt());
+    }
+
+    @Test
     void accountCreate_newPlayer_returnsFalse_whenCreationFails() {
         when(player.getName()).thenReturn("Alice");
         when(db.hasPlayerRecord(player)).thenReturn(false);

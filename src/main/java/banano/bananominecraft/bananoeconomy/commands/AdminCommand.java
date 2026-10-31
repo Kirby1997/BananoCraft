@@ -763,6 +763,15 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
     {
         // /be setnode [http://[url/ip address]:[port]/]
 
+        // Console only: if the new node reports the wallet missing, the wallet seed (which controls
+        // every player's account) is sent to it - here or at the next startup, since the address is
+        // persisted. In-game admin permission alone must not be enough to redirect the seed.
+        if (sender != null)
+        {
+            SendMessage(sender, "For security, setnode can only be run from the server console.", ChatColor.RED);
+            return;
+        }
+
         if (args.length != 2)
         {
             SendMessage(sender, "You need to provide the new node address in the format 'http://[url/ip address][:port]' with no spaces.", ChatColor.RED);

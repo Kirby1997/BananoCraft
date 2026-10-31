@@ -81,7 +81,17 @@ class AdminCommandTest
 
     private boolean run(String... args)
     {
-        boolean result = command.onCommand(admin, null, "be", args);
+        return runAs(admin, args);
+    }
+
+    private boolean runFromConsole(String... args)
+    {
+        return runAs(server.getConsoleSender(), args);
+    }
+
+    private boolean runAs(org.bukkit.command.CommandSender sender, String... args)
+    {
+        boolean result = command.onCommand(sender, null, "be", args);
         server.getScheduler().waitAsyncTasksFinished();
         // Async tasks (e.g. setnode) hand their results back to the main thread.
         server.getScheduler().performOneTick();
@@ -104,10 +114,10 @@ class AdminCommandTest
     @Test
     void opPlayer_isAllowed()
     {
-        boolean result = run("setnode", "http://node:7072");
+        boolean result = run("freeze", "Bob");
 
         assertTrue(result);
-        verify(configEngine).setNodeAddress("http://node:7072");
+        verify(economyFuncs).freezePlayer("Bob");
     }
 
     @Test
@@ -140,11 +150,21 @@ class AdminCommandTest
     private static final String NEW_MASTER = "ban_3t6k35gi95xu6tergt6p69ck76ogmitsa8mnijtpxm9fkcm736xtoncuohr3";
 
     @Test
+    void setnode_fromInGamePlayer_isRefused()
+    {
+        // Even an op: redirecting the node can send the wallet seed to it.
+        run("setnode", "http://node:7072");
+
+        verify(configEngine, never()).setNodeAddress(anyString());
+        verifyNoInteractions(rpc);
+    }
+
+    @Test
     void setnode_persistsNodeAddress()
     {
         when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.EXISTS);
 
-        run("setnode", "http://node:7072");
+        runFromConsole("setnode", "http://node:7072");
 
         verify(configEngine).setNodeAddress("http://node:7072");
         verify(configEngine, atLeastOnce()).save();
@@ -158,7 +178,7 @@ class AdminCommandTest
         when(rpc.walletCreate()).thenReturn(true);
         when(rpc.accountCreate(0)).thenReturn(NEW_MASTER);
 
-        run("setnode", "http://node:7072");
+        runFromConsole("setnode", "http://node:7072");
 
         verify(rpc).walletCreate();
         verify(rpc).accountCreate(0);
@@ -170,7 +190,7 @@ class AdminCommandTest
     {
         when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.UNREACHABLE);
 
-        run("setnode", "http://node:7072");
+        runFromConsole("setnode", "http://node:7072");
 
         verify(rpc, never()).walletCreate();
         verify(rpc, never()).accountCreate(anyInt());
@@ -183,7 +203,7 @@ class AdminCommandTest
         when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.MISSING);
         when(rpc.walletCreate()).thenReturn(false);
 
-        run("setnode", "http://node:7072");
+        runFromConsole("setnode", "http://node:7072");
 
         verify(rpc, never()).accountCreate(anyInt());
         verify(configEngine, never()).setMasterWallet(anyString());
@@ -196,7 +216,7 @@ class AdminCommandTest
         when(rpc.walletCreate()).thenReturn(true);
         when(rpc.accountCreate(0)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
 
-        run("setnode", "http://node:7072");
+        runFromConsole("setnode", "http://node:7072");
 
         verify(configEngine, never()).setMasterWallet(anyString());
     }
@@ -206,7 +226,7 @@ class AdminCommandTest
     {
         when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.EXISTS);
 
-        command.onCommand(admin, null, "be", new String[] { "setnode", "http://node:7072" });
+        command.onCommand(server.getConsoleSender(), null, "be", new String[] { "setnode", "http://node:7072" });
 
         verify(taskTracker).track(any());
     }
@@ -214,7 +234,7 @@ class AdminCommandTest
     @Test
     void setnode_wrongArgCount_doesNotPersist()
     {
-        run("setnode"); // missing address
+        runFromConsole("setnode"); // missing address
 
         verify(configEngine, never()).setNodeAddress(anyString());
     }

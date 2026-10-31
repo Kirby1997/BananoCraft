@@ -176,10 +176,9 @@ public class MysqlDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
-            plugin.getLogger().log(Level.WARNING, "Failed to check wallet assignment.", ex);
+            // Fail closed: "not assigned" would let account creation proceed blind.
+            throw new IllegalStateException("Database unavailable: could not check wallet assignment.", ex);
         }
-
-        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -761,10 +760,9 @@ public class MysqlDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
-            plugin.getLogger().log(Level.WARNING, "Failed to check player record existence.", ex);
+            // Fail closed: "no record" would make account creation issue a duplicate wallet.
+            throw new IllegalStateException("Database unavailable: could not check player record existence.", ex);
         }
-
-        return false;
     }
 
     private List<PlayerRecord> queryPlayersByFrozen(boolean frozen)

@@ -263,9 +263,8 @@ public class MongoDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
-            plugin.getLogger().log(Level.WARNING, "Failed to check wallet assignment.", ex);
-
-            return false;
+            // Fail closed: "not assigned" would let account creation proceed blind.
+            throw new IllegalStateException("Database unavailable: could not check wallet assignment.", ex);
         }
     }
 
@@ -702,9 +701,8 @@ public class MongoDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
-            plugin.getLogger().log(Level.WARNING, "Failed to check for player record.", ex);
-
-            return false;
+            // Fail closed: "no record" would make account creation issue a duplicate wallet.
+            throw new IllegalStateException("Database unavailable: could not check for player record.", ex);
         }
     }
 
