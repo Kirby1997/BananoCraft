@@ -13,7 +13,7 @@ masterWallet: "INSERT MASTER WALLET HERE"
 #bankWalletID: ""
 
 # Database - for mongoDB, add the mongoURI (comment if using alternative)
-# If MongoDB is unreachable at startup the plugin logs an error and falls back to JSON files.
+# If MongoDB is unreachable at startup the plugin logs an error and disables itself.
 #mongoURI: "INSERT MONGOURI HERE"
 
 # Database - for MySQL, uncomment and populate the mysql config (comment if using alternative)

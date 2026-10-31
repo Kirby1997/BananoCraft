@@ -19,14 +19,15 @@ public final class DBConnectorFactory
      * Create the best-fit {@link IDBConnector} for the supplied plugin.
      *
      * <ul>
-     *   <li>If {@code mongoURI} is set → {@link MongoDBConnector} (falls back to
-     *       {@link JsonDBConnector}, with a loud warning, if the server is unreachable)</li>
+     *   <li>If {@code mongoURI} is set → {@link MongoDBConnector}, or {@code null} if the
+     *       server is unreachable (the caller must disable the plugin)</li>
      *   <li>Else if {@code mysqlServerName} is set → {@link MysqlDBConnector}</li>
      *   <li>Otherwise → {@link JsonDBConnector} (file-based fallback)</li>
      * </ul>
      *
      * @param plugin the owning plugin, used for config access and logging
-     * @return a ready-to-use {@link IDBConnector}
+     * @return a ready-to-use {@link IDBConnector}, or {@code null} if the configured
+     *         MongoDB server could not be reached
      */
     public static IDBConnector create(Plugin plugin)
     {
@@ -42,15 +43,14 @@ public final class DBConnectorFactory
             }
             catch (MongoDBConnector.ConnectionFailedException ex)
             {
-                // One clear line instead of a driver stack trace (issue #13).
+                // One clear line instead of a driver stack trace (issue #13). Fail closed rather than
+                // falling back to JSON: a fallback store has none of the existing UUID -> wallet records,
+                // so every player joining during the outage would be issued a new, orphaned wallet.
                 plugin.getLogger().severe("MongoDB is unreachable: " + ex.getMessage()
-                        + " Check mongoURI in config.yml and that the MongoDB server is running.");
-                plugin.getLogger().warning("**************************************************************");
-                plugin.getLogger().warning("* FALLING BACK TO LOCAL JSON STORAGE. Player records created  *");
-                plugin.getLogger().warning("* now will NOT be in MongoDB. Fix the connection and restart. *");
-                plugin.getLogger().warning("**************************************************************");
+                        + " Check mongoURI in config.yml and that the MongoDB server is running,"
+                        + " then restart the server. BananoEconomy will be disabled.");
 
-                return new JsonDBConnector(plugin);
+                return null;
             }
         }
         else if (isConfigured(config, "mysqlServerName"))

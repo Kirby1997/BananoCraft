@@ -7,7 +7,7 @@
 - JSON storage: offline payments are saved on every change instead of only every 15 minutes; a corrupt offlinepayments.json is moved aside rather than overwritten.
 - JSON storage: the duplicate-wallet index is built synchronously at startup, ignores non-player files and is kept up to date on insert/update.
 - New `updatePlayerWallet` storage operation (MongoDB, MySQL, JSON) used to replace invalid player wallets after a node migration (#7).
-- MongoDB (#13): 5s connect/server-selection timeouts and a startup ping; if MongoDB is unreachable a single clear error is logged and the plugin falls back to JSON storage with a loud warning. Read failures are logged instead of thrown; missing `frozen` fields no longer cause errors; saving an unchanged player record is no longer reported as a failure.
+- MongoDB (#13): 5s connect/server-selection timeouts and a startup ping; if MongoDB is unreachable a single clear error is logged and the plugin disables itself instead of spamming the console or issuing new wallets without its records. Read failures are logged instead of thrown; missing `frozen` fields no longer cause errors; saving an unchanged player record is no longer reported as a failure.
 - MongoDB driver console spam reduced (#12): the driver logger is set to WARN and the plugin no longer bundles logback (an SLF4J binding) — unused slf4j-api and Apache httpclient dependencies were removed.
 - Security: MySQL driver moved from `mysql:mysql-connector-java` 8.0.30 to `com.mysql:mysql-connector-j` 9.7.0.
 - Security: `seed-backup.txt` and `secret.key` are created readable by the owner only; the seed is never written to the log. An existing seed backup is never overwritten.

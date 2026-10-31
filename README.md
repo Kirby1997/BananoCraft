@@ -25,9 +25,8 @@ Set up a free database from mongodb.com ([or host your own](https://docs.mongodb
   (`users`, `offlinepayments`, `banks`, `bank_members`) automatically on first use, so
   nothing needs to be created by hand. The database user needs read/write access to it.
 * If MongoDB cannot be reached at startup (5 second timeout), the plugin logs a single
-  SEVERE error and **falls back to local JSON storage** for that run. Player records created
-  while in fallback mode are stored only in the JSON files — fix the connection and restart
-  as soon as possible.
+  SEVERE error and **disables itself** rather than running without its player records.
+  Fix the connection and restart the server.
 
 ## MySQL
 Set up a new MySQL database with a database user that can be used by the plugin.

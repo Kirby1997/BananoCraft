@@ -47,6 +47,12 @@ public final class BananoEconomyMain extends JavaPlugin
 
         // --- infrastructure (order matters: config before rpc before economy) ---
         this.db             = DBConnectorFactory.create(this);
+        if (this.db == null)
+        {
+            // The factory has already logged why; never run the economy without its records.
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         this.configEngine   = new ConfigEngine(this);
         this.i18n           = new I18n(this.getClass().getClassLoader());
         this.messageGenerator = new MessageGenerator(this.i18n, this.configEngine);
