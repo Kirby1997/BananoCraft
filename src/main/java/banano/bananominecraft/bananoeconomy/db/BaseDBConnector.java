@@ -86,6 +86,44 @@ public class BaseDBConnector implements IDBConnector
         return false;
     }
 
+    /**
+     * Persists a new wallet address via {@link #updatePlayerRecord(PlayerRecord)}
+     * (implemented per backend) and, only once that succeeds, updates the cached
+     * record so a failed write never leaves the cache out of step with storage.
+     */
+    @Override
+    public boolean updatePlayerWallet(Player player, String wallet)
+    {
+        if (player == null || wallet == null || wallet.isEmpty())
+        {
+            return false;
+        }
+
+        PlayerRecord existing = getPlayerRecord(player);
+
+        if (existing == null)
+        {
+            return false;
+        }
+
+        PlayerRecord updated = new PlayerRecord(
+                existing.getPlayerUUID(),
+                existing.getPlayerName(),
+                wallet,
+                existing.isFrozen());
+
+        if (!updatePlayerRecord(updated))
+        {
+            return false;
+        }
+
+        // Mutate the cached instance in place so anyone already holding it sees the new wallet.
+        existing.setWallet(wallet);
+        this.playerRecords.put(player.getUniqueId(), existing);
+
+        return true;
+    }
+
     @Override
     public void unloadPlayerRecord(Player player)
     {

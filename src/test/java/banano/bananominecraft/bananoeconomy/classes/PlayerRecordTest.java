@@ -40,4 +40,11 @@ class PlayerRecordTest {
         PlayerRecord record = new PlayerRecord(UUID_STR, "Bob", WALLET, true);
         assertTrue(record.isFrozen());
     }
+
+    @Test
+    void setWallet_replacesWallet() {
+        PlayerRecord record = new PlayerRecord(UUID_STR, "Alice", WALLET, false);
+        record.setWallet("ban_new");
+        assertEquals("ban_new", record.getWallet());
+    }
 }

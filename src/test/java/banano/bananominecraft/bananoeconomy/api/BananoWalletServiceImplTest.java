@@ -16,7 +16,8 @@ import static org.mockito.Mockito.*;
 class BananoWalletServiceImplTest
 {
     private static final UUID   PLAYER_ID = UUID.randomUUID();
-    private static final String WALLET    = "ban_playerwallet";
+    // Must be a Validator-valid address: the service treats anything else as "no wallet".
+    private static final String WALLET    = "ban_3t6k35gi95xu6tergt6p69ck76ogmitsa8mnijtpxm9fkcm736xtoncuohr3";
     private static final String DEST      = "ban_dest";
 
     private IDBConnector db;
@@ -50,6 +51,65 @@ class BananoWalletServiceImplTest
     {
         when(db.getPlayerRecord(PLAYER_ID)).thenReturn(null);
         assertNull(service.getAddress(PLAYER_ID));
+    }
+
+    @Test
+    void getAddress_returnsNull_whenStoredWalletIsCreationFailureSentinel()
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(
+                new PlayerRecord(PLAYER_ID.toString(), "PlayerName", RPC.ACCOUNT_CREATION_FAILED, false));
+        assertNull(service.getAddress(PLAYER_ID));
+    }
+
+    @Test
+    void getAddress_returnsNull_whenStoredWalletInvalid()
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(
+                new PlayerRecord(PLAYER_ID.toString(), "PlayerName", "ban_notreal", false));
+        assertNull(service.getAddress(PLAYER_ID));
+    }
+
+    @Test
+    void getAddress_returnsNull_forNullPlayerId()
+    {
+        assertNull(service.getAddress(null));
+        verifyNoInteractions(db);
+    }
+
+    @Test
+    void send_fails_whenStoredWalletIsCreationFailureSentinel() throws TransactionError
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(
+                new PlayerRecord(PLAYER_ID.toString(), "PlayerName", RPC.ACCOUNT_CREATION_FAILED, false));
+
+        BananoWalletService.SendResult result = service.send(PLAYER_ID, DEST, 1.5);
+
+        assertFalse(result.success());
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
+    }
+
+    @Test
+    void send_fails_forNonFiniteOrNonPositiveAmount() throws TransactionError
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(activeRecord());
+
+        assertFalse(service.send(PLAYER_ID, DEST, Double.NaN).success());
+        assertFalse(service.send(PLAYER_ID, DEST, Double.POSITIVE_INFINITY).success());
+        assertFalse(service.send(PLAYER_ID, DEST, 0).success());
+        assertFalse(service.send(PLAYER_ID, DEST, -1).success());
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
+    }
+
+    @Test
+    void send_doesNotLeakRuntimeExceptions() throws TransactionError
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(activeRecord());
+        when(rpc.sendTransaction(WALLET, DEST, 1.5)).thenThrow(new IllegalStateException("boom"));
+
+        BananoWalletService.SendResult result = service.send(PLAYER_ID, DEST, 1.5);
+
+        assertFalse(result.success());
+        assertNotNull(result.userError());
     }
 
     @Test

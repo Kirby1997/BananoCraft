@@ -36,6 +36,23 @@ public class RPC
      */
     public static final String ACCOUNT_CREATION_FAILED = "Account Creation Failed";
 
+    /**
+     * Result of asking the node whether a wallet exists.
+     *
+     * <p>{@link #MISSING} is only reported when the node explicitly says the wallet is unknown;
+     * any transport, parsing or unexpected node error is {@link #UNREACHABLE}, so callers never
+     * mistake a flaky node for a missing wallet (and create a new one) or for a healthy one.</p>
+     */
+    public enum WalletStatus
+    {
+        EXISTS,
+        MISSING,
+        UNREACHABLE
+    }
+
+    /** Node error text returned when the RPC "enable_control" setting is off. */
+    private static final String RPC_CONTROL_DISABLED = "RPC control is disabled";
+
     private final Plugin plugin;
     private final ConfigEngine configEngine;
     private final HttpTransport http;
@@ -109,14 +126,80 @@ public class RPC
         try
         {
             String accountResponse = sendPost(json_payload.toString());
-            JsonElement accountJson = JsonParser.parseString(accountResponse);
-            return accountJson.getAsJsonObject().get("account").getAsString();
+            JsonObject json = JsonParser.parseString(accountResponse).getAsJsonObject();
+
+            String error = errorText(json);
+            if (error != null)
+            {
+                logNodeError("account_create", error);
+                return ACCOUNT_CREATION_FAILED;
+            }
+
+            JsonElement account = json.get("account");
+            if (account == null || !account.isJsonPrimitive())
+            {
+                plugin.getLogger().severe("Account creation failed: node response did not contain an account.");
+                return ACCOUNT_CREATION_FAILED;
+            }
+
+            return account.getAsString();
         }
         catch (Exception e)
         {
             plugin.getLogger().log(Level.SEVERE, "Account creation failed.", e);
         }
         return ACCOUNT_CREATION_FAILED;
+    }
+
+    /**
+     * Returns the node's {@code "error"} text from {@code json}, or {@code null} if there is none.
+     */
+    private static String errorText(JsonObject json)
+    {
+        JsonElement error = json.get("error");
+        if (error == null || error.isJsonNull())
+        {
+            return null;
+        }
+        return error.isJsonPrimitive() ? error.getAsString() : error.toString();
+    }
+
+    /**
+     * Logs a node-reported error for a wallet-control action at SEVERE, adding a concrete hint
+     * when the node refuses because RPC control is switched off.
+     */
+    private void logNodeError(String action, String error)
+    {
+        if (RPC_CONTROL_DISABLED.equalsIgnoreCase(error.trim()))
+        {
+            plugin.getLogger().severe("Node rejected '" + action + "': " + error
+                    + ". Set enable_control = true in the node's RPC config (config-rpc.toml) and restart the node.");
+        }
+        else
+        {
+            plugin.getLogger().severe("Node rejected '" + action + "': " + error);
+        }
+    }
+
+    /**
+     * Parses a node response that must be a JSON object, then returns its {@code "block"} hash —
+     * throwing a {@link TransactionError} carrying the node's error text, or
+     * {@code missingBlockMessage} if no usable block hash is present.
+     */
+    private static String extractBlock(JsonObject json, String missingBlockMessage) throws TransactionError
+    {
+        String error = errorText(json);
+        if (error != null)
+        {
+            throw new TransactionError(error);
+        }
+
+        JsonElement block = json.get("block");
+        if (block == null || !block.isJsonPrimitive())
+        {
+            throw new TransactionError(missingBlockMessage);
+        }
+        return block.getAsString();
     }
 
     private BigInteger toRaw(double value)
@@ -134,7 +217,9 @@ public class RPC
     public Double fromRaw(BigDecimal bigDecimal)
     {
         BigDecimal divisor = getMultiplier();
-        BigDecimal result = bigDecimal.divide(divisor, 10, RoundingMode.HALF_UP);
+        // Round DOWN so a reported balance never exceeds the real one — otherwise "send all"
+        // could ask the node for slightly more raw than the account holds.
+        BigDecimal result = bigDecimal.divide(divisor, 10, RoundingMode.DOWN);
         return result.doubleValue();
     }
 
@@ -151,7 +236,7 @@ public class RPC
     public String sendTransaction(String sender, String recipient, double value, String walletId)
             throws TransactionError
     {
-        if (value <= 0)
+        if (!Double.isFinite(value) || value <= 0)
         {
             throw new TransactionError("Transaction amount must be greater than zero.");
         }
@@ -161,20 +246,40 @@ public class RPC
             throw new TransactionError("Invalid address for sender or recipient.");
         }
 
+        final BigInteger raw;
+
+        try
+        {
+            raw = toRaw(value);
+        }
+        catch (final RuntimeException e)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to convert send amount to raw: " + value, e);
+            throw new TransactionError("Invalid transaction amount.");
+        }
+
+        if (raw.signum() <= 0)
+        {
+            throw new TransactionError("Transaction amount must be greater than zero.");
+        }
+
         final JsonObject json_payload = new JsonObject();
 
         json_payload.addProperty("action",      "send");
         json_payload.addProperty("wallet",      walletId);
         json_payload.addProperty("source",      sender);
         json_payload.addProperty("destination", recipient);
-        json_payload.addProperty("amount",      toRaw(value));
+        json_payload.addProperty("amount",      raw);
+        // Unique per logical send: if this exact request is retried (e.g. after a timeout where
+        // the node did process it), the node returns the original block instead of sending twice.
+        json_payload.addProperty("id",          UUID.randomUUID().toString());
 
-        final JsonElement accountJson;
+        final JsonObject json;
 
         try
         {
             final String sendResponse = sendPost(json_payload.toString());
-            accountJson = JsonParser.parseString(sendResponse);
+            json = JsonParser.parseString(sendResponse).getAsJsonObject();
         }
         catch (final Exception e)
         {
@@ -182,17 +287,7 @@ public class RPC
             throw new TransactionError("Send transaction failed");
         }
 
-        final JsonObject json  = accountJson.getAsJsonObject();
-        final JsonElement error = json.get("error");
-        if (error != null)
-        {
-            throw new TransactionError(error.getAsString());
-        }
-
-        return Optional
-                .ofNullable(json.get("block"))
-                .map(JsonElement::getAsString)
-                .orElseThrow(() -> new TransactionError("Send transaction resulted in missing block"));
+        return extractBlock(json, "Send transaction resulted in missing block");
     }
 
     /**
@@ -215,12 +310,12 @@ public class RPC
         json_payload.addProperty("account",        account);
         json_payload.addProperty("representative", representative);
 
-        final JsonElement responseJson;
+        final JsonObject json;
 
         try
         {
             final String response = sendPost(json_payload.toString());
-            responseJson = JsonParser.parseString(response);
+            json = JsonParser.parseString(response).getAsJsonObject();
         }
         catch (final Exception e)
         {
@@ -228,17 +323,7 @@ public class RPC
             throw new TransactionError("Set representative failed");
         }
 
-        final JsonObject json  = responseJson.getAsJsonObject();
-        final JsonElement error = json.get("error");
-        if (error != null)
-        {
-            throw new TransactionError(error.getAsString());
-        }
-
-        return Optional
-                .ofNullable(json.get("block"))
-                .map(JsonElement::getAsString)
-                .orElseThrow(() -> new TransactionError("Set representative resulted in missing block"));
+        return extractBlock(json, "Set representative resulted in missing block");
     }
 
     /**
@@ -322,12 +407,12 @@ public class RPC
         json_payload.addProperty("account", account);
         json_payload.addProperty("block",   blockHash);
 
-        final JsonElement responseJson;
+        final JsonObject json;
 
         try
         {
             final String response = sendPost(json_payload.toString());
-            responseJson = JsonParser.parseString(response);
+            json = JsonParser.parseString(response).getAsJsonObject();
         }
         catch (final Exception e)
         {
@@ -335,17 +420,7 @@ public class RPC
             throw new TransactionError("Receive transaction failed");
         }
 
-        final JsonObject json  = responseJson.getAsJsonObject();
-        final JsonElement error = json.get("error");
-        if (error != null)
-        {
-            throw new TransactionError(error.getAsString());
-        }
-
-        return Optional
-                .ofNullable(json.get("block"))
-                .map(JsonElement::getAsString)
-                .orElseThrow(() -> new TransactionError("Receive transaction resulted in missing block"));
+        return extractBlock(json, "Receive transaction resulted in missing block");
     }
 
     /**
@@ -427,23 +502,33 @@ public class RPC
         json_payload.addProperty("action", "account_info");
         json_payload.addProperty("account", account);
 
+        // NOTE: 0.0 doubles as the failure value here (callers rely on the Double signature), so
+        // every failure path is at least logged at WARNING to distinguish it from a real zero.
         try
         {
             String balanceResponse = sendPost(json_payload.toString());
-            JsonElement accountJson = JsonParser.parseString(balanceResponse);
-            try
+            JsonObject json = JsonParser.parseString(balanceResponse).getAsJsonObject();
+
+            String error = errorText(json);
+            if (error != null)
             {
-                BigDecimal bigDecimal = accountJson.getAsJsonObject().get("balance").getAsBigDecimal();
-                return fromRaw(bigDecimal);
-            }
-            catch (Exception e)
-            {
-                JsonElement errorElement = accountJson.getAsJsonObject().get("error");
-                if (errorElement != null && errorElement.getAsString().equals("Account not found"))
+                // An unopened account genuinely has a zero balance — not a failure.
+                if (!error.equals("Account not found"))
                 {
-                    return 0.0;
+                    plugin.getLogger().warning("Failed to retrieve balance for account " + account + ": " + error);
                 }
+                return 0.0;
             }
+
+            JsonElement balance = json.get("balance");
+            if (balance == null || !balance.isJsonPrimitive())
+            {
+                plugin.getLogger().warning("Failed to retrieve balance for account " + account
+                        + ": node response did not contain a balance.");
+                return 0.0;
+            }
+
+            return fromRaw(balance.getAsBigDecimal());
         }
         catch (Exception e)
         {
@@ -555,39 +640,84 @@ public class RPC
         return Arrays.asList("Null", "Null");
     }
 
-    public Boolean wallet_exists()
+    /**
+     * Cheap liveness check against the node ({@code block_count}).
+     *
+     * @return {@code true} only if the node answered with a valid block count
+     */
+    public boolean ping()
     {
         final JsonObject json_payload = new JsonObject();
-        final String walletID = getWalletID();
-
-        json_payload.addProperty("action", "wallet_balances");
-        json_payload.addProperty("wallet", walletID);
+        json_payload.addProperty("action", "block_count");
 
         try
         {
-            JsonElement existsJson = JsonParser.parseString(sendPost(json_payload.toString()));
-            try
-            {
-                String exists = existsJson.getAsJsonObject().get("error").getAsString();
-                if (exists.equals("Wallet not found") || exists.equals("Bad wallet number"))
-                {
-                    return false;
-                }
-                else
-                {
-                    plugin.getLogger().warning("Unexpected wallet_balances error: " + exists);
-                }
-            }
-            catch (Exception e)
-            {
-                plugin.getLogger().info("Master wallet found.");
-            }
+            JsonObject json = JsonParser.parseString(sendPost(json_payload.toString())).getAsJsonObject();
+            JsonElement count = json.get("count");
+            return errorText(json) == null && count != null && count.isJsonPrimitive();
         }
         catch (Exception e)
         {
-            plugin.getLogger().log(Level.WARNING, "Failed to check wallet existence.", e);
+            plugin.getLogger().log(Level.FINE, "Node ping failed.", e);
         }
-        return true;
+        return false;
+    }
+
+    /** Whether the configured main wallet exists on the node — see {@link WalletStatus}. */
+    public WalletStatus walletStatus()
+    {
+        return queryWalletStatus(getWalletID(), "Master");
+    }
+
+    /**
+     * Returns {@code true} only if the node confirms the main wallet exists. A transport or
+     * unexpected node error yields {@code false}; use {@link #walletStatus()} to tell
+     * "missing" apart from "node unreachable" before creating anything.
+     */
+    public Boolean wallet_exists()
+    {
+        return walletStatus() == WalletStatus.EXISTS;
+    }
+
+    /**
+     * Asks the node for {@code walletId}'s balances. {@code wallet_balances} succeeds for any
+     * existing wallet, so it doubles as an existence check.
+     */
+    private WalletStatus queryWalletStatus(String walletId, String label)
+    {
+        final JsonObject json_payload = new JsonObject();
+        json_payload.addProperty("action", "wallet_balances");
+        json_payload.addProperty("wallet", walletId == null ? "" : walletId);
+
+        try
+        {
+            JsonObject json = JsonParser.parseString(sendPost(json_payload.toString())).getAsJsonObject();
+            String error = errorText(json);
+
+            if (error != null)
+            {
+                if (error.equals("Wallet not found") || error.equals("Bad wallet number"))
+                {
+                    return WalletStatus.MISSING;
+                }
+
+                plugin.getLogger().warning("Unexpected " + label + " wallet_balances error: " + error);
+                return WalletStatus.UNREACHABLE;
+            }
+
+            if (json.has("balances"))
+            {
+                plugin.getLogger().info(label + " wallet found.");
+                return WalletStatus.EXISTS;
+            }
+
+            plugin.getLogger().warning("Unexpected " + label + " wallet_balances response: " + json);
+        }
+        catch (Exception e)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to check " + label + " wallet existence.", e);
+        }
+        return WalletStatus.UNREACHABLE;
     }
 
     public Boolean wallet_contains(String account)
@@ -621,95 +751,103 @@ public class RPC
         return false;
     }
 
-    public void walletCreate()
+    /**
+     * Creates the main wallet on the node from the configured seed and persists its ID.
+     *
+     * @return {@code true} only if the node returned a wallet ID and it was saved to config
+     */
+    public boolean walletCreate()
     {
-        String seed = configEngine.getWalletSeed();
-
-        final JsonObject json_payload = new JsonObject();
-        json_payload.addProperty("action", "wallet_create");
-        json_payload.addProperty("seed", seed);
-
-        try
-        {
-            JsonElement blocksJson = JsonParser.parseString(sendPost(json_payload.toString()));
-            String walletID = blocksJson.getAsJsonObject().get("wallet").getAsString();
-
-            plugin.getLogger().info("Wallet ID generated: " + walletID);
-
-            // Persist through ConfigEngine so save() writes all fields consistently.
-            configEngine.setWalletId(walletID);
-            configEngine.save();
-        }
-        catch (Exception e)
-        {
-            plugin.getLogger().log(Level.SEVERE, "walletCreate failed.", e);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Bank wallet lifecycle
-    // -------------------------------------------------------------------------
-
-    public Boolean bankWalletExists()
-    {
-        final String bankWalletId = configEngine.getBankWalletId();
-        if (bankWalletId == null || bankWalletId.isEmpty())
+        String walletID = createWalletFromSeed(configEngine.getWalletSeed(), "walletCreate");
+        if (walletID == null)
         {
             return false;
         }
 
-        final JsonObject json_payload = new JsonObject();
-        json_payload.addProperty("action", "wallet_balances");
-        json_payload.addProperty("wallet", bankWalletId);
+        plugin.getLogger().info("Wallet ID generated: " + walletID);
 
-        try
-        {
-            JsonElement existsJson = JsonParser.parseString(sendPost(json_payload.toString()));
-            try
-            {
-                String error = existsJson.getAsJsonObject().get("error").getAsString();
-                if (error.equals("Wallet not found") || error.equals("Bad wallet number"))
-                {
-                    return false;
-                }
-                else
-                {
-                    plugin.getLogger().warning("Unexpected bank wallet_balances error: " + error);
-                }
-            }
-            catch (Exception e)
-            {
-                plugin.getLogger().info("Bank wallet found.");
-            }
-        }
-        catch (Exception e)
-        {
-            plugin.getLogger().log(Level.WARNING, "Failed to check bank wallet existence.", e);
-        }
-        return true;
+        // Persist through ConfigEngine so save() writes all fields consistently.
+        configEngine.setWalletId(walletID);
+        return configEngine.save();
     }
 
-    public void bankWalletCreate()
+    /**
+     * Sends {@code wallet_create} with {@code seed}; returns the new wallet ID, or {@code null}
+     * (after logging why) on any failure.
+     */
+    private String createWalletFromSeed(String seed, String label)
     {
-        String seed = configEngine.getBankWalletSeed();
-
         final JsonObject json_payload = new JsonObject();
         json_payload.addProperty("action", "wallet_create");
         json_payload.addProperty("seed",   seed);
 
         try
         {
-            JsonElement blocksJson = JsonParser.parseString(sendPost(json_payload.toString()));
-            String walletId = blocksJson.getAsJsonObject().get("wallet").getAsString();
+            JsonObject json = JsonParser.parseString(sendPost(json_payload.toString())).getAsJsonObject();
 
-            plugin.getLogger().info("Bank wallet ID generated: " + walletId);
+            String error = errorText(json);
+            if (error != null)
+            {
+                logNodeError("wallet_create", error);
+                return null;
+            }
 
-            configEngine.setBankWalletId(walletId);
-            configEngine.save();
+            JsonElement wallet = json.get("wallet");
+            if (wallet == null || !wallet.isJsonPrimitive() || wallet.getAsString().isEmpty())
+            {
+                plugin.getLogger().severe(label + " failed: node response did not contain a wallet ID.");
+                return null;
+            }
+
+            return wallet.getAsString();
         }
         catch (Exception e)
         {
-            plugin.getLogger().log(Level.SEVERE, "bankWalletCreate failed.", e);
+            plugin.getLogger().log(Level.SEVERE, label + " failed.", e);
         }
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Bank wallet lifecycle
+    // -------------------------------------------------------------------------
+
+    /**
+     * Whether the configured bank wallet exists on the node — see {@link WalletStatus}. An
+     * unconfigured (empty) bank wallet ID is reported as {@link WalletStatus#MISSING}.
+     */
+    public WalletStatus bankWalletStatus()
+    {
+        final String bankWalletId = configEngine.getBankWalletId();
+        if (bankWalletId == null || bankWalletId.isEmpty())
+        {
+            return WalletStatus.MISSING;
+        }
+        return queryWalletStatus(bankWalletId, "Bank");
+    }
+
+    /** Returns {@code true} only if the node confirms the bank wallet exists. */
+    public Boolean bankWalletExists()
+    {
+        return bankWalletStatus() == WalletStatus.EXISTS;
+    }
+
+    /**
+     * Creates the bank wallet on the node from the configured bank seed and persists its ID.
+     *
+     * @return {@code true} only if the node returned a wallet ID and it was saved to config
+     */
+    public boolean bankWalletCreate()
+    {
+        String walletId = createWalletFromSeed(configEngine.getBankWalletSeed(), "bankWalletCreate");
+        if (walletId == null)
+        {
+            return false;
+        }
+
+        plugin.getLogger().info("Bank wallet ID generated: " + walletId);
+
+        configEngine.setBankWalletId(walletId);
+        return configEngine.save();
     }
 }

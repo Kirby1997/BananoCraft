@@ -12,6 +12,7 @@ import net.md_5.bungee.api.chat.ComponentBuilder;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.scheduler.BukkitTask;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
@@ -52,7 +53,17 @@ public class BananoWebSocket
     /** Set to true only by {@link #shutdown()} to suppress the reconnect loop. */
     private volatile boolean intentionallyClosed = false;
 
-    private int reconnectDelayTicks = INITIAL_RECONNECT_TICKS;
+    private volatile int reconnectDelayTicks = INITIAL_RECONNECT_TICKS;
+
+    /** The pending back-off reconnect, if any — cancelled on swap/shutdown. Guarded by {@code this}. */
+    private BukkitTask reconnectTask;
+
+    /**
+     * Whether the confirmation subscription has been sent on the current client. Subscribing is
+     * deferred until at least one account is watched: a subscription without an
+     * {@code accounts} filter receives every confirmation on the network. Guarded by {@code this}.
+     */
+    private boolean subscribed = false;
 
     /**
      * The live inner client.  May be replaced by {@link #swapClient(URI)}.
@@ -87,11 +98,20 @@ public class BananoWebSocket
      */
     public void shutdown()
     {
-        intentionallyClosed = true;
+        WebSocketClient current;
 
-        if (!client.isClosed())
+        synchronized (this)
         {
-            client.close();
+            intentionallyClosed = true;
+            cancelReconnectTask();
+            current = client;
+        }
+
+        // Closed outside the lock: close() can take the library's internal monitor, which its
+        // own thread may hold while calling back into onClose -> scheduleReconnect (our lock).
+        if (!current.isClosed())
+        {
+            current.close();
         }
     }
 
@@ -106,7 +126,7 @@ public class BananoWebSocket
     public void reconnect()
     {
         plugin.getLogger().info("[WebSocket] Admin-initiated reconnect.");
-        swapClient(URI.create(configEngine.getWebsocketUrl()));
+        swapClient(URI.create(configEngine.getWebsocketUrl()), true);
     }
 
     /**
@@ -120,7 +140,7 @@ public class BananoWebSocket
         configEngine.setWebsocketUrl(newUrl);
         configEngine.save();
         plugin.getLogger().info("[WebSocket] URL updated to " + newUrl + " — reconnecting.");
-        swapClient(URI.create(newUrl));
+        swapClient(URI.create(newUrl), true);
     }
 
     /** Returns the URL the inner client is currently targeting. */
@@ -146,13 +166,26 @@ public class BananoWebSocket
 
         watchedAccounts.put(wallet, playerUUID);
 
-        if (client.isOpen())
+        synchronized (this)
         {
+            WebSocketClient c = client;
+            if (!c.isOpen())
+            {
+                return; // onOpen subscribes with every watched account
+            }
+
+            if (!subscribed)
+            {
+                // First watched account on this connection — subscribe now (includes this wallet).
+                sendSubscription(c);
+                return;
+            }
+
             JsonArray add = new JsonArray();
             add.add(wallet);
             JsonObject options = new JsonObject();
             options.add("accounts_add", add);
-            client.send(buildUpdate(options));
+            c.send(buildUpdate(options));
         }
     }
 
@@ -168,13 +201,21 @@ public class BananoWebSocket
 
         watchedAccounts.remove(wallet);
 
-        if (client.isOpen())
+        synchronized (this)
         {
+            WebSocketClient c = client;
+            // Nothing to update if we never subscribed. Once subscribed with an accounts filter,
+            // removing the last account leaves an empty filter (no notifications), not "all".
+            if (!subscribed || !c.isOpen())
+            {
+                return;
+            }
+
             JsonArray del = new JsonArray();
             del.add(wallet);
             JsonObject options = new JsonObject();
             options.add("accounts_del", del);
-            client.send(buildUpdate(options));
+            c.send(buildUpdate(options));
         }
     }
 
@@ -189,22 +230,40 @@ public class BananoWebSocket
      * <p>Old-client callbacks detect the swap via the identity check
      * {@code this == BananoWebSocket.this.client} and become no-ops, so there
      * is no risk of the old client triggering a second reconnect loop.</p>
+     *
+     * @param resetBackoff {@code true} for admin-initiated swaps; {@code false} for the
+     *                     automatic reconnect loop so the exponential back-off keeps growing
      */
-    private void swapClient(URI newUri)
+    private void swapClient(URI newUri, boolean resetBackoff)
     {
-        intentionallyClosed = false;
-        reconnectDelayTicks = INITIAL_RECONNECT_TICKS;
+        WebSocketClient old;
 
-        WebSocketClient old = this.client;
-        this.client = buildClient(newUri);
+        // The swap itself is atomic so concurrent admin/auto reconnects can't both install a
+        // client (leaking a live connection) or race on the pending reconnect task.
+        synchronized (this)
+        {
+            intentionallyClosed = false;
+            cancelReconnectTask();
 
-        // Close old after swapping so its onClose fires but is silently ignored.
+            if (resetBackoff)
+            {
+                reconnectDelayTicks = INITIAL_RECONNECT_TICKS;
+            }
+
+            old = this.client;
+            this.client = buildClient(newUri);
+            this.subscribed = false;
+
+            // connect() only starts the client's thread, so it is safe under the lock.
+            this.client.connect();
+        }
+
+        // Close old after swapping so its onClose fires but is silently ignored. Done outside
+        // the lock for the same reason as in shutdown().
         if (old != null && !old.isClosed())
         {
             old.close();
         }
-
-        this.client.connect();
     }
 
     /**
@@ -226,7 +285,15 @@ public class BananoWebSocket
 
                 plugin.getLogger().info("[WebSocket] Connected to " + uri);
                 reconnectDelayTicks = INITIAL_RECONNECT_TICKS;
-                sendSubscription(this);
+
+                synchronized (BananoWebSocket.this)
+                {
+                    // Defer until the first watchAccount if nobody is watched yet.
+                    if (this == BananoWebSocket.this.client && !subscribed && !watchedAccounts.isEmpty())
+                    {
+                        sendSubscription(this);
+                    }
+                }
             }
 
             @Override
@@ -330,19 +397,18 @@ public class BananoWebSocket
 
     /**
      * Send the initial confirmation subscription, re-including all currently
-     * watched accounts so they are restored after a reconnect.
+     * watched accounts so they are restored after a reconnect. Callers hold the
+     * wrapper's lock and only call this with at least one watched account, so an
+     * "accounts" filter is always present (no filter would mean the whole network).
      */
     private void sendSubscription(WebSocketClient c)
     {
         JsonObject options = new JsonObject();
         options.addProperty("include_block", "true");
 
-        if (!watchedAccounts.isEmpty())
-        {
-            JsonArray accounts = new JsonArray();
-            watchedAccounts.keySet().forEach(accounts::add);
-            options.add("accounts", accounts);
-        }
+        JsonArray accounts = new JsonArray();
+        watchedAccounts.keySet().forEach(accounts::add);
+        options.add("accounts", accounts);
 
         JsonObject subscribe = new JsonObject();
         subscribe.addProperty("action", "subscribe");
@@ -350,6 +416,7 @@ public class BananoWebSocket
         subscribe.add("options", options);
 
         c.send(subscribe.toString());
+        subscribed = true;
     }
 
     private String buildUpdate(JsonObject options)
@@ -363,22 +430,39 @@ public class BananoWebSocket
     }
 
     /** Schedule a reconnect with exponential back-off via the Bukkit scheduler. */
-    private void scheduleReconnect()
+    private synchronized void scheduleReconnect()
     {
+        if (intentionallyClosed || !plugin.isEnabled())
+        {
+            return;
+        }
+
         int delay = reconnectDelayTicks;
         reconnectDelayTicks = Math.min(reconnectDelayTicks * 2, MAX_RECONNECT_TICKS);
 
         plugin.getLogger().info(String.format(
                 "[WebSocket] Reconnecting in %d s...", delay / 20));
 
-        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () ->
+        // Only one pending reconnect at a time.
+        cancelReconnectTask();
+        reconnectTask = Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, () ->
         {
             if (intentionallyClosed || !plugin.isEnabled())
             {
                 return;
             }
-            swapClient(URI.create(configEngine.getWebsocketUrl()));
+            swapClient(URI.create(configEngine.getWebsocketUrl()), false);
         }, delay);
+    }
+
+    /** Cancels the pending back-off reconnect, if any. Callers hold the wrapper's lock. */
+    private void cancelReconnectTask()
+    {
+        if (reconnectTask != null)
+        {
+            reconnectTask.cancel();
+            reconnectTask = null;
+        }
     }
 
     /** Deliver the deposit notification on the main server thread. */

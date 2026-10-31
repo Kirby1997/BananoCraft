@@ -5,7 +5,7 @@ public class PlayerRecord
     private final String playerUUID;
 
     private final String playerName;
-    private final String wallet;
+    private String wallet;
     private boolean isFrozen;
 
     public PlayerRecord(String playerUUID, String playerName, String wallet, boolean isFrozen)
@@ -29,6 +29,15 @@ public class PlayerRecord
     public String getWallet()
     {
         return this.wallet;
+    }
+
+    /**
+     * Replace the wallet address held by this record. Only changes the in-memory
+     * value; use {@code IDBConnector.updatePlayerWallet} to persist it.
+     */
+    public void setWallet(String wallet)
+    {
+        this.wallet = wallet;
     }
 
     public boolean isFrozen()

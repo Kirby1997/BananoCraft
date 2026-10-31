@@ -197,6 +197,23 @@ class TransactionRecordTest
                 "Full hash should not appear in the row string");
     }
 
+    @Test
+    void toRecordString_nullHash_doesNotThrow()
+    {
+        TransactionRecord record = new TransactionRecord(DATE, WALLET, TransactionDirection.Send, 5.0, null, true);
+
+        assertDoesNotThrow(() -> record.toRecordString(messageGenerator));
+    }
+
+    @Test
+    void toRecordString_shortHash_renderedInFull()
+    {
+        TransactionRecord record = new TransactionRecord(DATE, WALLET, TransactionDirection.Send, 5.0, "abc", true);
+
+        assertTrue(plainText(record.toRecordString(messageGenerator)).contains("abc..."),
+                "A hash shorter than 8 chars should be shown in full without throwing");
+    }
+
     // -------------------------------------------------------------------------
     // toRecordString — amount formatting (DecimalFormat "#.##")
     // -------------------------------------------------------------------------

@@ -83,6 +83,8 @@ class AdminCommandTest
     {
         boolean result = command.onCommand(admin, null, "be", args);
         server.getScheduler().waitAsyncTasksFinished();
+        // Async tasks (e.g. setnode) hand their results back to the main thread.
+        server.getScheduler().performOneTick();
         return result;
     }
 
@@ -135,28 +137,78 @@ class AdminCommandTest
 
     // --- setnode ---
 
+    private static final String NEW_MASTER = "ban_3t6k35gi95xu6tergt6p69ck76ogmitsa8mnijtpxm9fkcm736xtoncuohr3";
+
     @Test
     void setnode_persistsNodeAddress()
     {
-        when(rpc.wallet_exists()).thenReturn(true);
+        when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.EXISTS);
 
         run("setnode", "http://node:7072");
 
         verify(configEngine).setNodeAddress("http://node:7072");
         verify(configEngine, atLeastOnce()).save();
+        verify(rpc, never()).walletCreate();
     }
 
     @Test
     void setnode_createsMasterWallet_whenWalletMissing()
     {
-        when(rpc.wallet_exists()).thenReturn(false);
-        when(rpc.accountCreate(0)).thenReturn("ban_newmaster");
+        when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.MISSING);
+        when(rpc.walletCreate()).thenReturn(true);
+        when(rpc.accountCreate(0)).thenReturn(NEW_MASTER);
 
         run("setnode", "http://node:7072");
 
         verify(rpc).walletCreate();
         verify(rpc).accountCreate(0);
-        verify(configEngine).setMasterWallet("ban_newmaster");
+        verify(configEngine).setMasterWallet(NEW_MASTER);
+    }
+
+    @Test
+    void setnode_doesNotCreateWallet_whenNodeUnreachable()
+    {
+        when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.UNREACHABLE);
+
+        run("setnode", "http://node:7072");
+
+        verify(rpc, never()).walletCreate();
+        verify(rpc, never()).accountCreate(anyInt());
+        verify(configEngine, never()).setMasterWallet(anyString());
+    }
+
+    @Test
+    void setnode_stops_whenWalletCreateFails()
+    {
+        when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.MISSING);
+        when(rpc.walletCreate()).thenReturn(false);
+
+        run("setnode", "http://node:7072");
+
+        verify(rpc, never()).accountCreate(anyInt());
+        verify(configEngine, never()).setMasterWallet(anyString());
+    }
+
+    @Test
+    void setnode_doesNotSaveSentinelAsMasterWallet()
+    {
+        when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.MISSING);
+        when(rpc.walletCreate()).thenReturn(true);
+        when(rpc.accountCreate(0)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
+
+        run("setnode", "http://node:7072");
+
+        verify(configEngine, never()).setMasterWallet(anyString());
+    }
+
+    @Test
+    void setnode_rpcRunsOffTheCommandThread()
+    {
+        when(rpc.walletStatus()).thenReturn(RPC.WalletStatus.EXISTS);
+
+        command.onCommand(admin, null, "be", new String[] { "setnode", "http://node:7072" });
+
+        verify(taskTracker).track(any());
     }
 
     @Test
@@ -380,6 +432,49 @@ class AdminCommandTest
         when(configEngine.getMasterWallet()).thenReturn("ban_master");
 
         run("serverwallet", "tip", "0", "Bob");
+
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
+    }
+
+    @Test
+    void serverwallet_tip_all_resolvesBalanceAsync() throws TransactionError
+    {
+        Player bob = server.addPlayer("Bob");
+        PlayerRecord record = new PlayerRecord(bob.getUniqueId().toString(), "Bob", "ban_bob", false);
+        when(db.getPlayerRecord(any(Player.class))).thenReturn(record);
+        when(configEngine.getMasterWallet()).thenReturn("ban_master");
+        when(configEngine.getExplorerBlock()).thenReturn("https://explorer/block/");
+        when(rpc.getBalance("ban_master")).thenReturn(4.0);
+        when(rpc.sendTransaction("ban_master", "ban_bob", 4.0)).thenReturn("BLOCK");
+
+        command.onCommand(admin, null, "be", new String[] { "serverwallet", "tip", "all", "Bob" });
+        // Nothing on the command thread may hit the node.
+        verify(rpc, never()).getBalance(anyString());
+
+        server.getScheduler().waitAsyncTasksFinished();
+
+        verify(rpc).getBalance("ban_master");
+        verify(rpc).sendTransaction("ban_master", "ban_bob", 4.0);
+    }
+
+    @Test
+    void serverwallet_tip_nonFiniteAmount_isRejected() throws TransactionError
+    {
+        when(configEngine.getMasterWallet()).thenReturn("ban_master");
+
+        run("serverwallet", "tip", "NaN", "Bob");
+        run("serverwallet", "tip", "Infinity", "Bob");
+
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
+    }
+
+    @Test
+    void serverwallet_withdraw_nonFiniteAmount_isRejected() throws TransactionError
+    {
+        when(configEngine.getMasterWallet()).thenReturn("ban_master");
+
+        run("serverwallet", "withdraw", "NaN", "ban_dest");
+        run("serverwallet", "withdraw", "Infinity", "ban_dest");
 
         verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
     }

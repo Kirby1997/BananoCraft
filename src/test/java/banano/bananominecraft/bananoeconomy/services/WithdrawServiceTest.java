@@ -51,6 +51,14 @@ class WithdrawServiceTest
     }
 
     @Test
+    void resolveAmount_nonFinite_throws()
+    {
+        assertThrows(NumberFormatException.class, () -> service.resolveAmount(WALLET, "NaN"));
+        assertThrows(NumberFormatException.class, () -> service.resolveAmount(WALLET, "Infinity"));
+        assertThrows(NumberFormatException.class, () -> service.resolveAmount(WALLET, "-Infinity"));
+    }
+
+    @Test
     void withdraw_success_returnsBlockHash() throws TransactionError
     {
         when(rpc.sendTransaction(WALLET, DEST, 2.0)).thenReturn("BLOCK");

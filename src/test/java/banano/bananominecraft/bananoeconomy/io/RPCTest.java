@@ -80,6 +80,13 @@ class RPCTest
         assertEquals(2.5, rpc.fromRaw(new BigDecimal("250000000000000000000000000000")));
     }
 
+    @Test
+    void fromRaw_roundsDown_soBalanceIsNeverOverstated()
+    {
+        // 1.99999999999999999999999999999 BAN: HALF_UP at 10 dp would report 2.0.
+        assertEquals(1.9999999999, rpc.fromRaw(new BigDecimal("199999999999999999999999999999")));
+    }
+
     // -------------------------------------------------------------------------
     // accountCreate
     // -------------------------------------------------------------------------
@@ -112,6 +119,20 @@ class RPCTest
         assertEquals(RPC.ACCOUNT_CREATION_FAILED, rpc.accountCreate(0));
     }
 
+    @Test
+    void accountCreate_returnsSentinel_whenRpcControlDisabled() throws Exception
+    {
+        stubResponse("{\"error\":\"RPC control is disabled\"}");
+        assertEquals(RPC.ACCOUNT_CREATION_FAILED, rpc.accountCreate(0));
+    }
+
+    @Test
+    void accountCreate_returnsSentinel_whenAccountMissing() throws Exception
+    {
+        stubResponse("{}");
+        assertEquals(RPC.ACCOUNT_CREATION_FAILED, rpc.accountCreate(0));
+    }
+
     // -------------------------------------------------------------------------
     // sendTransaction
     // -------------------------------------------------------------------------
@@ -129,6 +150,66 @@ class RPCTest
         TransactionError ex = assertThrows(TransactionError.class,
                 () -> rpc.sendTransaction(SENDER, RECIPIENT, 0));
         assertTrue(ex.getMessage().toLowerCase().contains("greater than zero"));
+    }
+
+    @Test
+    void sendTransaction_throws_whenAmountNotFinite()
+    {
+        assertThrows(TransactionError.class,
+                () -> rpc.sendTransaction(SENDER, RECIPIENT, Double.NaN));
+        assertThrows(TransactionError.class,
+                () -> rpc.sendTransaction(SENDER, RECIPIENT, Double.POSITIVE_INFINITY));
+    }
+
+    @Test
+    void sendTransaction_throws_whenAmountRoundsToZeroRaw()
+    {
+        // Smaller than 1 raw with the test multiplier.
+        assertThrows(TransactionError.class,
+                () -> rpc.sendTransaction(SENDER, RECIPIENT, 1e-40));
+    }
+
+    @Test
+    void sendTransaction_throws_TransactionError_whenMultiplierMisconfigured()
+    {
+        when(configEngine.getMultiplier()).thenReturn("not a number");
+        assertThrows(TransactionError.class,
+                () -> rpc.sendTransaction(SENDER, RECIPIENT, 1.0));
+    }
+
+    @Test
+    void sendTransaction_includesUniqueIdempotencyId() throws Exception
+    {
+        stubResponse("{\"block\":\"ABC123\"}");
+        rpc.sendTransaction(SENDER, RECIPIENT, 1.0);
+        rpc.sendTransaction(SENDER, RECIPIENT, 1.0);
+
+        org.mockito.ArgumentCaptor<String> payloads = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(http, times(2)).post(anyString(), payloads.capture());
+
+        String id1 = com.google.gson.JsonParser.parseString(payloads.getAllValues().get(0))
+                .getAsJsonObject().get("id").getAsString();
+        String id2 = com.google.gson.JsonParser.parseString(payloads.getAllValues().get(1))
+                .getAsJsonObject().get("id").getAsString();
+        assertFalse(id1.isEmpty());
+        assertNotEquals(id1, id2);
+    }
+
+    @Test
+    void sendTransaction_throws_TransactionError_onNonObjectResponse() throws Exception
+    {
+        stubResponse("[1,2,3]");
+        TransactionError ex = assertThrows(TransactionError.class,
+                () -> rpc.sendTransaction(SENDER, RECIPIENT, 1.0));
+        assertEquals("Send transaction failed", ex.getMessage());
+    }
+
+    @Test
+    void sendTransaction_throws_TransactionError_whenBlockNotAString() throws Exception
+    {
+        stubResponse("{\"block\":{}}");
+        assertThrows(TransactionError.class,
+                () -> rpc.sendTransaction(SENDER, RECIPIENT, 1.0));
     }
 
     @Test
@@ -307,6 +388,14 @@ class RPCTest
         TransactionError ex = assertThrows(TransactionError.class,
                 () -> rpc.receiveBlock("WALLET_ID", SENDER, "PENDINGHASH"));
         assertEquals("Block not found", ex.getMessage());
+    }
+
+    @Test
+    void receiveBlock_throws_TransactionError_onNonObjectResponse() throws Exception
+    {
+        stubResponse("\"just a string\"");
+        assertThrows(TransactionError.class,
+                () -> rpc.receiveBlock("WALLET_ID", SENDER, "PENDINGHASH"));
     }
 
     @Test
@@ -525,10 +614,96 @@ class RPCTest
     }
 
     @Test
-    void walletExists_true_onTransportFailure() throws Exception
+    void walletExists_false_onTransportFailure() throws Exception
+    {
+        // Must not claim the wallet exists when the node can't be reached.
+        stubFailure();
+        assertFalse(rpc.wallet_exists());
+    }
+
+    @Test
+    void walletStatus_exists_whenBalancesReturned() throws Exception
+    {
+        stubResponse("{\"balances\":{}}");
+        assertEquals(RPC.WalletStatus.EXISTS, rpc.walletStatus());
+    }
+
+    @Test
+    void walletStatus_missing_whenWalletNotFound() throws Exception
+    {
+        stubResponse("{\"error\":\"Wallet not found\"}");
+        assertEquals(RPC.WalletStatus.MISSING, rpc.walletStatus());
+    }
+
+    @Test
+    void walletStatus_unreachable_onTransportFailure() throws Exception
     {
         stubFailure();
-        assertTrue(rpc.wallet_exists());
+        assertEquals(RPC.WalletStatus.UNREACHABLE, rpc.walletStatus());
+    }
+
+    @Test
+    void walletStatus_unreachable_onOtherNodeError() throws Exception
+    {
+        stubResponse("{\"error\":\"RPC control is disabled\"}");
+        assertEquals(RPC.WalletStatus.UNREACHABLE, rpc.walletStatus());
+    }
+
+    @Test
+    void walletStatus_unreachable_onMalformedResponse() throws Exception
+    {
+        stubResponse("[]");
+        assertEquals(RPC.WalletStatus.UNREACHABLE, rpc.walletStatus());
+    }
+
+    @Test
+    void bankWalletStatus_missing_whenNotConfigured() throws Exception
+    {
+        when(configEngine.getBankWalletId()).thenReturn("");
+        assertEquals(RPC.WalletStatus.MISSING, rpc.bankWalletStatus());
+        verify(http, never()).post(anyString(), anyString());
+    }
+
+    @Test
+    void bankWalletStatus_unreachable_onTransportFailure() throws Exception
+    {
+        when(configEngine.getBankWalletId()).thenReturn("BANK_WALLET_ID");
+        stubFailure();
+        assertEquals(RPC.WalletStatus.UNREACHABLE, rpc.bankWalletStatus());
+        assertFalse(rpc.bankWalletExists());
+    }
+
+    @Test
+    void bankWalletStatus_exists_whenBalancesReturned() throws Exception
+    {
+        when(configEngine.getBankWalletId()).thenReturn("BANK_WALLET_ID");
+        stubResponse("{\"balances\":{}}");
+        assertEquals(RPC.WalletStatus.EXISTS, rpc.bankWalletStatus());
+    }
+
+    // -------------------------------------------------------------------------
+    // ping
+    // -------------------------------------------------------------------------
+
+    @Test
+    void ping_true_onValidBlockCount() throws Exception
+    {
+        stubResponse("{\"count\":\"100\",\"unchecked\":\"0\"}");
+        assertTrue(rpc.ping());
+    }
+
+    @Test
+    void ping_false_onTransportFailure() throws Exception
+    {
+        stubFailure();
+        assertFalse(rpc.ping());
+    }
+
+    @Test
+    void ping_false_onErrorOrMalformedResponse() throws Exception
+    {
+        stubResponse("{\"error\":\"Unknown command\"}");
+        assertFalse(rpc.ping());
     }
 
     // -------------------------------------------------------------------------
@@ -564,7 +739,8 @@ class RPCTest
     void walletCreate_persistsWalletId_onSuccess() throws Exception
     {
         stubResponse("{\"wallet\":\"NEW_WALLET_ID\"}");
-        rpc.walletCreate();
+        when(configEngine.save()).thenReturn(true);
+        assertTrue(rpc.walletCreate());
         verify(configEngine).setWalletId("NEW_WALLET_ID");
         verify(configEngine).save();
     }
@@ -573,8 +749,27 @@ class RPCTest
     void walletCreate_doesNothing_onFailure() throws Exception
     {
         stubFailure();
-        rpc.walletCreate();
+        assertFalse(rpc.walletCreate());
         verify(configEngine, never()).setWalletId(anyString());
         verify(configEngine, never()).save();
+    }
+
+    @Test
+    void walletCreate_doesNothing_whenNodeReturnsError() throws Exception
+    {
+        stubResponse("{\"error\":\"RPC control is disabled\"}");
+        assertFalse(rpc.walletCreate());
+        verify(configEngine, never()).setWalletId(anyString());
+        verify(configEngine, never()).save();
+    }
+
+    @Test
+    void bankWalletCreate_persistsWalletId_onSuccess() throws Exception
+    {
+        when(configEngine.getBankWalletSeed()).thenReturn("BANK_SEED");
+        when(configEngine.save()).thenReturn(true);
+        stubResponse("{\"wallet\":\"BANK_WALLET_ID\"}");
+        assertTrue(rpc.bankWalletCreate());
+        verify(configEngine).setBankWalletId("BANK_WALLET_ID");
     }
 }

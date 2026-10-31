@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy.events;
 
 import banano.bananominecraft.bananoeconomy.io.BananoWebSocket;
 import banano.bananominecraft.bananoeconomy.io.EconomyFuncs;
+import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -30,11 +31,38 @@ public class OnLeave implements Listener
             // Retrieve wallet before unloading the record from memory
             String wallet = economyFuncs.getWallet(event.getPlayer());
             webSocket.unwatchAccount(wallet);
-            economyFuncs.unloadAccount(event.getPlayer());
+            unloadAccount(event.getPlayer());
         }
         catch (Exception ex)
         {
             plugin.getLogger().log(Level.WARNING, "Error during player leave cleanup.", ex);
         }
+    }
+
+    /**
+     * Persisting the record is a DB write that can block for the full connection timeout when
+     * the database is down, so it runs off the main thread. While the plugin is disabling, async
+     * tasks can't be scheduled — fall back to a synchronous unload (the shutdown path flushes
+     * all records synchronously anyway).
+     */
+    private void unloadAccount(Player player)
+    {
+        if (!plugin.isEnabled())
+        {
+            economyFuncs.unloadAccount(player);
+            return;
+        }
+
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () ->
+        {
+            try
+            {
+                economyFuncs.unloadAccount(player);
+            }
+            catch (Exception ex)
+            {
+                plugin.getLogger().log(Level.WARNING, "Error unloading account for " + player.getName(), ex);
+            }
+        });
     }
 }

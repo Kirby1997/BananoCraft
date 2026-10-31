@@ -79,7 +79,7 @@ public class WithdrawCommand implements CommandExecutor
                     {
                         double amount = withdrawService.resolveAmount(playerWallet, args[0]);
 
-                        if (amount <= 0)
+                        if (!Double.isFinite(amount) || amount <= 0)
                         {
                             player.sendMessage(i18n.get(locale, "withdraw.amount_not_positive"));
                             return;

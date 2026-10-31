@@ -54,9 +54,19 @@ public record TransactionRecord(
 
         ComponentBuilder componentBuilder = new ComponentBuilder(sb.toString());
 
-        componentBuilder.append(messageGenerator.generateBlockExplorerLink(
-                transactionHash, transactionHash.substring(0, 8)));
-        componentBuilder.append("...");
+        // Guard against a missing or unexpectedly short hash from the node so a
+        // single malformed history entry cannot break the whole listing.
+        if (transactionHash == null || transactionHash.isEmpty())
+        {
+            componentBuilder.append("-");
+        }
+        else
+        {
+            String shortHash = transactionHash.length() > 8 ? transactionHash.substring(0, 8) : transactionHash;
+
+            componentBuilder.append(messageGenerator.generateBlockExplorerLink(transactionHash, shortHash));
+            componentBuilder.append("...");
+        }
 
         return componentBuilder.create();
     }

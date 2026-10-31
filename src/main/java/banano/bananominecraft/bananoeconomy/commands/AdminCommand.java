@@ -6,6 +6,7 @@ import banano.bananominecraft.bananoeconomy.io.RPC;
 import banano.bananominecraft.bananoeconomy.services.TipService;
 import banano.bananominecraft.bananoeconomy.services.WithdrawService;
 import banano.bananominecraft.bananoeconomy.trackers.TaskTracker;
+import banano.bananominecraft.bananoeconomy.validation.Validator;
 import banano.bananominecraft.bananoeconomy.classes.MessageGenerator;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
@@ -268,7 +269,7 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
                 {
                     double amount = withdrawService.resolveAmount(wallet, args[2]);
 
-                    if (amount <= 0)
+                    if (!Double.isFinite(amount) || amount <= 0)
                     {
                         SendMessage(sender, "Amount has to be greater than 0", ChatColor.RED);
                         return;
@@ -344,29 +345,32 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         if (args.length >= 4)
         {
             final String sAmount = args[2];
-            final double amount;
+            // "all" needs a balance RPC, which must not block the main thread — it is resolved
+            // inside the async task below. Anything else is parsed and validated here.
+            final boolean tipAll = sAmount.equalsIgnoreCase(ARG_ALL);
+            final double parsedAmount;
 
-            try
+            if (tipAll)
             {
-                if (sAmount.equalsIgnoreCase(ARG_ALL))
+                parsedAmount = 0;
+            }
+            else
+            {
+                try
                 {
-                    amount = rpc.getBalance(this.configEngine.getMasterWallet());
+                    parsedAmount = Double.parseDouble(sAmount);
                 }
-                else
+                catch (final NumberFormatException e)
                 {
-                    amount = Double.parseDouble(sAmount);
+                    SendMessage(sender, String.format("Amount ('%s') is not a number greater than 0", sAmount), ChatColor.RED);
+                    return;
                 }
 
-                if (amount <= 0)
+                if (!Double.isFinite(parsedAmount) || parsedAmount <= 0)
                 {
                     SendMessage(sender, String.format("Amount ('%s') has to be greater than 0", sAmount), ChatColor.RED);
                     return;
                 }
-            }
-            catch (final Exception e)
-            {
-                SendMessage(sender, String.format("Amount ('%s') is not a number greater than 0", sAmount), ChatColor.RED);
-                return;
             }
 
             final String targetPlayerName = args[3];
@@ -389,6 +393,24 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
                 {
                     SendMessage(sender, "You cannot tip " + targetPlayerName + " because their wallet is frozen!", ChatColor.RED);
                     return;
+                }
+
+                final double amount;
+
+                if (tipAll)
+                {
+                    final Double balance = rpc.getBalance(this.configEngine.getMasterWallet());
+                    amount = balance == null ? 0 : balance;
+
+                    if (!Double.isFinite(amount) || amount <= 0)
+                    {
+                        SendMessage(sender, String.format("Amount ('%s') has to be greater than 0", sAmount), ChatColor.RED);
+                        return;
+                    }
+                }
+                else
+                {
+                    amount = parsedAmount;
                 }
 
                 SendMessage(sender, "Tipping " + target.getPlayerName() + " with " + amount + " bans.", ChatColor.YELLOW);
@@ -599,7 +621,7 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         {
             final String playerName = args[index];
             Optional<OfflinePlayer> p = Arrays.stream(Bukkit.getOfflinePlayers())
-                    .filter(x -> x.getName().equalsIgnoreCase(playerName))
+                    .filter(x -> x.getName() != null && x.getName().equalsIgnoreCase(playerName))
                     .findFirst();
 
             if (p == null || !p.isPresent())
@@ -617,8 +639,14 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
             }
             else
             {
-                economyFuncs.freezePlayer(p.get());
-                SendMessage(sender, String.format("%s account has been frozen", playerName), ChatColor.GREEN);
+                if (economyFuncs.freezePlayer(p.get()))
+                {
+                    SendMessage(sender, String.format("%s account has been frozen", playerName), ChatColor.GREEN);
+                }
+                else
+                {
+                    SendMessage(sender, String.format("%s account could not be frozen (no wallet record, or saving failed)", playerName), ChatColor.RED);
+                }
             }
         }
     }
@@ -637,7 +665,7 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
         {
             final String playerName = args[index];
             Optional<OfflinePlayer> p = Arrays.stream(Bukkit.getOfflinePlayers())
-                    .filter(x -> x.getName().equalsIgnoreCase(playerName))
+                    .filter(x -> x.getName() != null && x.getName().equalsIgnoreCase(playerName))
                     .findFirst();
 
             if (p == null || !p.isPresent())
@@ -655,8 +683,14 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
             }
             else
             {
-                economyFuncs.unfreezePlayer(p.get());
-                SendMessage(sender, String.format("%s account has been unfrozen", playerName), ChatColor.GREEN);
+                if (economyFuncs.unfreezePlayer(p.get()))
+                {
+                    SendMessage(sender, String.format("%s account has been unfrozen", playerName), ChatColor.GREEN);
+                }
+                else
+                {
+                    SendMessage(sender, String.format("%s account could not be unfrozen (no wallet record, or saving failed)", playerName), ChatColor.RED);
+                }
             }
         }
     }
@@ -741,20 +775,75 @@ public class AdminCommand extends BaseCommand implements CommandExecutor
 
         SendMessage(sender, "The node address has been set to '" + newNodeAddress + "'.", ChatColor.GREEN);
 
-        String masterWallet = this.configEngine.getMasterWallet();
-
-        if (!rpc.wallet_exists())
+        // Everything below talks to the (possibly new and slow/unreachable) node, so it runs
+        // off the main thread. Config writes and replies hop back to the main thread.
+        BukkitTask task = Bukkit.getScheduler().runTaskAsynchronously(plugin, () ->
         {
-            SendMessage(sender, "The master wallet does not exist... attempting to configure the master wallet.", ChatColor.AQUA);
+            if (!plugin.isEnabled())
+            {
+                return;
+            }
 
-            rpc.walletCreate();
+            final RPC.WalletStatus status = rpc.walletStatus();
 
-            masterWallet = rpc.accountCreate(0);
+            if (status == RPC.WalletStatus.EXISTS)
+            {
+                runOnMainThread(() -> showMasterWallet(sender, this.configEngine.getMasterWallet()));
+                return;
+            }
 
-            this.configEngine.setMasterWallet(masterWallet);
-            this.configEngine.save();
+            if (status != RPC.WalletStatus.MISSING)
+            {
+                // UNREACHABLE (or unknown): never create a wallet we can't confirm is missing.
+                runOnMainThread(() -> SendMessage(sender,
+                        "Could not reach the node to check the master wallet. Check the address and try again.",
+                        ChatColor.RED));
+                return;
+            }
+
+            runOnMainThread(() -> SendMessage(sender,
+                    "The master wallet does not exist... attempting to configure the master wallet.",
+                    ChatColor.AQUA));
+
+            if (!rpc.walletCreate())
+            {
+                runOnMainThread(() -> SendMessage(sender, "Failed to create the master wallet on the node.", ChatColor.RED));
+                return;
+            }
+
+            final String newMasterWallet = rpc.accountCreate(0);
+
+            if (newMasterWallet == null
+                    || newMasterWallet.equalsIgnoreCase(RPC.ACCOUNT_CREATION_FAILED)
+                    || !Validator.validateAddress(newMasterWallet))
+            {
+                runOnMainThread(() -> SendMessage(sender,
+                        "Failed to create the master wallet account on the node.", ChatColor.RED));
+                return;
+            }
+
+            runOnMainThread(() ->
+            {
+                this.configEngine.setMasterWallet(newMasterWallet);
+                this.configEngine.save();
+                showMasterWallet(sender, newMasterWallet);
+            });
+        });
+
+        taskTracker.track(task);
+    }
+
+    /** Schedules {@code action} on the main server thread, unless the plugin is shutting down. */
+    private void runOnMainThread(Runnable action)
+    {
+        if (plugin.isEnabled())
+        {
+            Bukkit.getScheduler().runTask(plugin, action);
         }
+    }
 
+    private void showMasterWallet(Player sender, String masterWallet)
+    {
         if (sender != null)
         {
             sender.spigot().sendMessage(messageGenerator.generateClickableAddressMessage(

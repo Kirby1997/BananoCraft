@@ -87,29 +87,38 @@ public class TipCommand extends BaseCommand implements CommandExecutor
 
         final String message = generateMessageString(args);
         final String sAmount = args[0];
-        final double amount;
+        // "all" needs a balance RPC, which must not block the main thread — it is resolved
+        // inside the async task below. Anything else is parsed and validated here.
+        final boolean tipAll = sAmount.equalsIgnoreCase(ARG_ALL);
+        final double parsedAmount;
 
-        try
+        if (tipAll)
         {
-            if (sAmount.equalsIgnoreCase(ARG_ALL))
+            parsedAmount = 0;
+        }
+        else
+        {
+            try
             {
-                amount = rpc.getBalance(senderRecord.getWallet());
+                parsedAmount = Double.parseDouble(sAmount);
             }
-            else
+            catch (final NumberFormatException e)
             {
-                amount = Double.parseDouble(sAmount);
+                SendMessage(player, i18n.get(locale, "tip.amount_not_number", sAmount), ChatColor.RED);
+                return false;
             }
 
-            if (amount <= 0)
+            if (!Double.isFinite(parsedAmount))
+            {
+                SendMessage(player, i18n.get(locale, "tip.amount_not_number", sAmount), ChatColor.RED);
+                return false;
+            }
+
+            if (parsedAmount <= 0)
             {
                 SendMessage(player, i18n.get(locale, "tip.amount_not_positive", sAmount), ChatColor.RED);
                 return false;
             }
-        }
-        catch (final Exception e)
-        {
-            SendMessage(player, i18n.get(locale, "tip.amount_not_number", sAmount), ChatColor.RED);
-            return false;
         }
 
         final String targetPlayerName = args[1];
@@ -143,6 +152,24 @@ public class TipCommand extends BaseCommand implements CommandExecutor
             {
                 SendMessage(player, i18n.get(locale, "tip.target_frozen", targetPlayerName), ChatColor.RED);
                 return;
+            }
+
+            final double amount;
+
+            if (tipAll)
+            {
+                Double balance = rpc.getBalance(senderRecord.getWallet());
+                amount = balance == null ? 0 : balance;
+
+                if (!Double.isFinite(amount) || amount <= 0)
+                {
+                    SendMessage(player, i18n.get(locale, "tip.amount_not_positive", sAmount), ChatColor.RED);
+                    return;
+                }
+            }
+            else
+            {
+                amount = parsedAmount;
             }
 
             SendMessage(player, i18n.get(locale, "tip.sending", target.getPlayerName(), amount), ChatColor.WHITE);

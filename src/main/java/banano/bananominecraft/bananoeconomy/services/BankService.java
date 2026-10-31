@@ -11,6 +11,7 @@ import org.bukkit.scheduler.BukkitTask;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 
 /**
@@ -40,6 +41,11 @@ public class BankService
 
     private final ConcurrentHashMap<String, Double> bankBalanceCache = new ConcurrentHashMap<>();
 
+    // Serializes blocks on the master-wallet account (sends from it and receives into it).
+    // Replaced with EconomyFuncs' lock via shareMasterWalletLock so that bank transfers and
+    // Vault player deposits/withdrawals don't interleave on the same account chain.
+    private volatile ReentrantLock masterWalletLock = new ReentrantLock(true);
+
     private static final int    BANK_NAME_MAX_LENGTH = 64;
     private static final String BANK_NAME_PATTERN    = "[a-zA-Z0-9_-]+";
 
@@ -49,6 +55,39 @@ public class BankService
         this.configEngine = configEngine;
         this.rpc          = rpc;
         this.db           = db;
+    }
+
+    /** Uses the given lock (normally EconomyFuncs' master-wallet lock) for master-wallet blocks. */
+    public void shareMasterWalletLock(ReentrantLock lock)
+    {
+        if (lock != null)
+        {
+            this.masterWalletLock = lock;
+        }
+    }
+
+    /**
+     * Best-effort: the transfer has already succeeded regardless of whether this does. If it
+     * fails, the block is simply left pending until the next receive.
+     */
+    private void tryAutoReceive(String walletId, String recipient, String blockHash)
+    {
+        try
+        {
+            if (walletId == null)
+            {
+                rpc.receiveBlock(recipient, blockHash);
+            }
+            else
+            {
+                rpc.receiveBlock(walletId, recipient, blockHash);
+            }
+        }
+        catch (Exception e)
+        {
+            plugin.getLogger().log(Level.WARNING,
+                    "Failed to auto-receive block " + blockHash + " for " + recipient, e);
+        }
     }
 
     public boolean isBankingEnabled()
@@ -198,14 +237,23 @@ public class BankService
             return false;
         }
 
-        if (rpc.getBalance(rpc.getMasterWallet()) < amount)
+        if (!Double.isFinite(amount) || amount <= 0)
         {
             return false;
         }
 
+        ReentrantLock lock = this.masterWalletLock;
+        lock.lock();
+
         try
         {
-            rpc.sendTransaction(rpc.getMasterWallet(), bank.getAddress(), amount);
+            if (rpc.getBalance(rpc.getMasterWallet()) < amount)
+            {
+                return false;
+            }
+
+            String blockHash = rpc.sendTransaction(rpc.getMasterWallet(), bank.getAddress(), amount);
+            tryAutoReceive(configEngine.getBankWalletId(), bank.getAddress(), blockHash);
             bankBalanceCache.remove(bankName);
 
             return true;
@@ -215,6 +263,10 @@ public class BankService
             plugin.getLogger().log(Level.WARNING, "Bank deposit failed for '" + bankName + "'.", e);
 
             return false;
+        }
+        finally
+        {
+            lock.unlock();
         }
     }
 
@@ -231,6 +283,11 @@ public class BankService
             return false;
         }
 
+        if (!Double.isFinite(amount) || amount <= 0)
+        {
+            return false;
+        }
+
         double liveBalance = rpc.getBalance(bank.getAddress());
         if (liveBalance < amount)
         {
@@ -242,9 +299,22 @@ public class BankService
 
         try
         {
-            rpc.sendTransaction(bank.getAddress(), rpc.getMasterWallet(), amount,
+            String blockHash = rpc.sendTransaction(bank.getAddress(), rpc.getMasterWallet(), amount,
                     configEngine.getBankWalletId());
             bankBalanceCache.remove(bankName);
+
+            // Receiving creates a block on the master-wallet chain, so serialize it like a send.
+            ReentrantLock lock = this.masterWalletLock;
+            lock.lock();
+
+            try
+            {
+                tryAutoReceive(null, rpc.getMasterWallet(), blockHash);
+            }
+            finally
+            {
+                lock.unlock();
+            }
 
             return true;
         }

@@ -27,7 +27,7 @@ public final class WithdrawService
      * Resolve an amount argument: {@code "all"} maps to the current balance of
      * {@code sourceWallet}; otherwise the string is parsed as a double.
      *
-     * @throws NumberFormatException if {@code amountArg} is neither "all" nor a number
+     * @throws NumberFormatException if {@code amountArg} is neither "all" nor a finite number
      */
     public double resolveAmount(String sourceWallet, String amountArg)
     {
@@ -35,7 +35,15 @@ public final class WithdrawService
         {
             return rpc.getBalance(sourceWallet);
         }
-        return Double.parseDouble(amountArg);
+        double amount = Double.parseDouble(amountArg);
+
+        // parseDouble accepts "NaN" and "Infinity", which would slip past "amount <= 0" checks.
+        if (!Double.isFinite(amount))
+        {
+            throw new NumberFormatException("Amount is not a finite number: " + amountArg);
+        }
+
+        return amount;
     }
 
     /**

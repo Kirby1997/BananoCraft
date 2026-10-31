@@ -9,17 +9,23 @@ import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
-import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.*;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Supplier;
 import java.util.logging.Level;
+import java.util.regex.Pattern;
 
 public class JsonDBConnector extends BaseDBConnector
 {
@@ -29,6 +35,10 @@ public class JsonDBConnector extends BaseDBConnector
     /** Repeating auto-save interval in ticks (18 000 t = 15 minutes). */
     private static final long SAVE_INTERVAL_TICKS = 18_000L;
 
+    /** Player files are named {@code <uuid>.json}; anything else (banks.json etc.) is not a player. */
+    private static final Pattern PLAYER_FILE_NAME = Pattern.compile(
+            "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\.json$");
+
     private final Plugin plugin;
     private final File   dataLocation;
 
@@ -37,10 +47,16 @@ public class JsonDBConnector extends BaseDBConnector
      * assigned.  Used by {@link #isAlreadyAssignedToOtherPlayer} to prevent
      * duplicate wallet assignment.
      *
-     * <p>Accessed from the async wallet-loader task AND from the main thread,
-     * so a {@link ConcurrentHashMap} is required.</p>
+     * <p>Accessed from async tasks AND from the main thread, so a
+     * {@link ConcurrentHashMap} is required.</p>
      */
     private final ConcurrentHashMap<String, String> claimedWallets = new ConcurrentHashMap<>();
+
+    /**
+     * One monitor per target file so that concurrent saves of the same file are
+     * serialised. Only one lock is ever held at a time, so this cannot deadlock.
+     */
+    private final ConcurrentHashMap<String, Object> fileLocks = new ConcurrentHashMap<>();
 
     /**
      * In-memory list of pending offline payment notifications.
@@ -97,26 +113,19 @@ public class JsonDBConnector extends BaseDBConnector
         File file = new File(this.dataLocation, playerRecord.getPlayerUUID() + ".json");
         plugin.getLogger().info("Saving player file: " + file.getName());
 
-        try
+        if (!writeJsonAtomically(file, new GsonBuilder().create(), () -> playerRecord))
         {
-            if (!file.exists())
-            {
-                file.createNewFile();
-            }
-
-            try (Writer fileWriter = new FileWriter(file, false))
-            {
-                new GsonBuilder().create().toJson(playerRecord, fileWriter);
-            }
-
-            plugin.getLogger().info("Player file '" + file.getName() + "' saved successfully.");
-            return true;
+            plugin.getLogger().severe("Player file save failed: " + file.getName());
+            return false;
         }
-        catch (IOException ex)
+
+        if (playerRecord.getWallet() != null)
         {
-            plugin.getLogger().log(Level.SEVERE, "Player file save failed.", ex);
+            claimedWallets.put(playerRecord.getWallet(), playerRecord.getPlayerUUID());
         }
-        return false;
+
+        plugin.getLogger().info("Player file '" + file.getName() + "' saved successfully.");
+        return true;
     }
 
     @Override
@@ -124,6 +133,23 @@ public class JsonDBConnector extends BaseDBConnector
     {
         // Overwrite the entire file — same as insert for the JSON backend.
         return insertPlayerRecord(playerRecord);
+    }
+
+    @Override
+    public boolean updatePlayerWallet(Player player, String wallet)
+    {
+        PlayerRecord existing = player == null ? null : getPlayerRecord(player);
+        String oldWallet = existing == null ? null : existing.getWallet();
+
+        boolean updated = super.updatePlayerWallet(player, wallet);
+
+        // insertPlayerRecord has already indexed the new wallet; drop the stale entry.
+        if (updated && oldWallet != null && !oldWallet.equals(wallet))
+        {
+            claimedWallets.remove(oldWallet, player.getUniqueId().toString());
+        }
+
+        return updated;
     }
 
     @Override
@@ -159,6 +185,11 @@ public class JsonDBConnector extends BaseDBConnector
 
         offlinePaymentRecords.add(paymentRecord);
 
+        // Persist immediately so a crash cannot lose the payment notification. The
+        // record stays in memory even if this write fails and is retried by the
+        // periodic flush / shutdown save.
+        saveOfflinePaymentRecords();
+
         return true;
     }
 
@@ -178,9 +209,10 @@ public class JsonDBConnector extends BaseDBConnector
     @Override
     public void deleteOfflinePaymentRecords(Player forPlayer)
     {
-        if (forPlayer != null)
+        if (forPlayer != null
+                && offlinePaymentRecords.removeIf(r -> r.targetPlayerUUID().equals(forPlayer.getUniqueId())))
         {
-            offlinePaymentRecords.removeIf(r -> r.targetPlayerUUID().equals(forPlayer.getUniqueId()));
+            saveOfflinePaymentRecords();
         }
     }
 
@@ -289,44 +321,43 @@ public class JsonDBConnector extends BaseDBConnector
     }
 
     /**
-     * Asynchronously reads every player JSON file in the data directory and
+     * Reads every player JSON file ({@code <uuid>.json}) in the data directory and
      * builds the {@link #claimedWallets} map so that duplicate wallet detection
-     * works even for offline players.
+     * works even for offline players. Runs synchronously in the constructor so
+     * the index is complete before any player can join.
      */
     private void loadClaimedWallets()
     {
-        new BukkitRunnable()
+        File[] files = dataLocation.listFiles((dir, name) -> PLAYER_FILE_NAME.matcher(name).matches());
+
+        if (files == null)
         {
-            @Override
-            public void run()
+            return; // directory I/O error or not a directory
+        }
+
+        Gson gson = new GsonBuilder().create();
+
+        for (File file : files)
+        {
+            if (file.length() == 0)
             {
-                File[] files = dataLocation.listFiles();
+                continue;
+            }
 
-                if (files == null)
+            try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8))
+            {
+                PlayerRecord record = gson.fromJson(reader, PlayerRecord.class);
+                if (record != null && record.getWallet() != null)
                 {
-                    return; // directory I/O error or not a directory
-                }
-
-                Gson gson = new GsonBuilder().create();
-
-                for (File file : files)
-                {
-                    try (Reader reader = new FileReader(file))
-                    {
-                        PlayerRecord record = gson.fromJson(reader, PlayerRecord.class);
-                        if (record != null && record.getWallet() != null)
-                        {
-                            claimedWallets.put(record.getWallet(), record.getPlayerUUID());
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        plugin.getLogger().log(Level.WARNING,
-                                "Failed to read player file during wallet index load: " + file.getName(), ex);
-                    }
+                    claimedWallets.put(record.getWallet(), record.getPlayerUUID());
                 }
             }
-        }.runTaskAsynchronously(plugin);
+            catch (Exception ex)
+            {
+                plugin.getLogger().log(Level.WARNING,
+                        "Failed to read player file during wallet index load: " + file.getName(), ex);
+            }
+        }
     }
 
     private PlayerRecord getPlayerRecord(UUID playerUUID, boolean cacheRecord)
@@ -339,35 +370,50 @@ public class JsonDBConnector extends BaseDBConnector
         }
 
         File file = new File(this.dataLocation, playerUUID + ".json");
+
+        // A missing or empty file means "no record". Never create the file here:
+        // an empty file would later make hasPlayerRecord() lie.
+        if (!file.isFile() || file.length() == 0)
+        {
+            return null;
+        }
+
         plugin.getLogger().info("Loading player file: " + file.getName());
 
-        try
+        PlayerRecord record = readPlayerFile(file);
+
+        if (record != null)
         {
-            if (!file.exists())
+            if (cacheRecord)
             {
-                file.createNewFile();
+                playerRecords.put(playerUUID, record);
             }
-
-            PlayerRecord record;
-            try (Reader reader = new FileReader(file))
-            {
-                record = new GsonBuilder().create().fromJson(reader, PlayerRecord.class);
-            }
-
-            if (record != null)
-            {
-                if (cacheRecord)
-                {
-                    playerRecords.put(playerUUID, record);
-                }
-                plugin.getLogger().info("Player loaded: " + record.getPlayerName());
-
-                return record;
-            }
+            plugin.getLogger().info("Player loaded: " + record.getPlayerName());
         }
-        catch (IOException ex)
+
+        return record;
+    }
+
+    /**
+     * Parse a player file. Returns {@code null} (and logs) if the file cannot be
+     * read or does not contain a valid player record.
+     */
+    private PlayerRecord readPlayerFile(File file)
+    {
+        try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8))
         {
-            plugin.getLogger().log(Level.SEVERE, "Loading player file failed!", ex);
+            PlayerRecord record = new GsonBuilder().create().fromJson(reader, PlayerRecord.class);
+
+            if (record == null || record.getPlayerUUID() == null)
+            {
+                return null;
+            }
+
+            return record;
+        }
+        catch (IOException | JsonParseException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Loading player file failed: " + file.getName(), ex);
         }
 
         return null;
@@ -375,7 +421,77 @@ public class JsonDBConnector extends BaseDBConnector
 
     private boolean hasPlayerRecord(UUID playerUUID)
     {
-        return new File(this.dataLocation, playerUUID + ".json").exists();
+        if (playerRecords.containsKey(playerUUID))
+        {
+            return true;
+        }
+
+        File file = new File(this.dataLocation, playerUUID + ".json");
+
+        // Empty or unparseable files (e.g. left behind by older versions) count as "no record".
+        return file.isFile() && file.length() > 0 && readPlayerFile(file) != null;
+    }
+
+    /**
+     * Serialise the value produced by {@code payload} to {@code target} via a temp
+     * file in the same directory followed by an atomic rename, so a crash mid-write
+     * can never leave a truncated file. Writes to the same file are serialised; the
+     * payload is evaluated inside the lock so the newest snapshot always wins.
+     *
+     * @return {@code true} if the file was written successfully
+     */
+    private boolean writeJsonAtomically(File target, Gson gson, Supplier<Object> payload)
+    {
+        Object lock = fileLocks.computeIfAbsent(target.getAbsolutePath(), k -> new Object());
+
+        synchronized (lock)
+        {
+            Path targetPath = target.toPath();
+            Path tmp = null;
+
+            try
+            {
+                tmp = Files.createTempFile(targetPath.getParent(), target.getName() + ".", ".tmp");
+
+                try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8))
+                {
+                    gson.toJson(payload.get(), writer);
+                }
+
+                try
+                {
+                    Files.move(tmp, targetPath,
+                            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                }
+                catch (AtomicMoveNotSupportedException ex)
+                {
+                    Files.move(tmp, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                tmp = null; // moved into place; nothing to clean up
+                return true;
+            }
+            catch (IOException | JsonIOException ex)
+            {
+                plugin.getLogger().log(Level.SEVERE, "Failed to write " + target.getName() + ".", ex);
+            }
+            finally
+            {
+                if (tmp != null)
+                {
+                    try
+                    {
+                        Files.deleteIfExists(tmp);
+                    }
+                    catch (IOException ignored)
+                    {
+                        // best effort
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private void loadBanks()
@@ -408,22 +524,7 @@ public class JsonDBConnector extends BaseDBConnector
     {
         File file = new File(dataLocation, "banks.json");
 
-        try
-        {
-            if (!file.exists())
-            {
-                file.createNewFile();
-            }
-
-            try (Writer writer = new FileWriter(file, false))
-            {
-                new GsonBuilder().create().toJson(bankRecords.values().toArray(), writer);
-            }
-        }
-        catch (IOException ex)
-        {
-            plugin.getLogger().log(Level.SEVERE, "Failed to save banks.json.", ex);
-        }
+        writeJsonAtomically(file, new GsonBuilder().create(), () -> bankRecords.values().toArray());
     }
 
     private void loadBankMembers()
@@ -459,28 +560,15 @@ public class JsonDBConnector extends BaseDBConnector
     {
         File file = new File(dataLocation, "bank_members.json");
 
-        try
+        writeJsonAtomically(file, new GsonBuilder().create(), () ->
         {
-            if (!file.exists())
-            {
-                file.createNewFile();
-            }
-
             Map<String, List<String>> serializable = new HashMap<>();
             for (Map.Entry<String, Set<String>> entry : bankMembers.entrySet())
             {
                 serializable.put(entry.getKey(), new ArrayList<>(entry.getValue()));
             }
-
-            try (Writer writer = new FileWriter(file, false))
-            {
-                new GsonBuilder().create().toJson(serializable, writer);
-            }
-        }
-        catch (IOException ex)
-        {
-            plugin.getLogger().log(Level.SEVERE, "Failed to save bank_members.json.", ex);
-        }
+            return serializable;
+        });
     }
 
     /** Persist the current in-memory offline payments list to disk. */
@@ -495,23 +583,13 @@ public class JsonDBConnector extends BaseDBConnector
                                 new JsonPrimitive(src.toInstant(ZoneOffset.UTC).toEpochMilli()))
                 .create();
 
-        try
+        if (writeJsonAtomically(file, gson, offlinePaymentRecords::toArray))
         {
-            if (!file.exists())
-            {
-                file.createNewFile();
-            }
-
-            try (Writer writer = new FileWriter(file, false))
-            {
-                gson.toJson(offlinePaymentRecords.toArray(), writer);
-            }
-
             plugin.getLogger().info("Offline payments file saved successfully.");
         }
-        catch (IOException ex)
+        else
         {
-            plugin.getLogger().log(Level.SEVERE, "Offline payments file save failed.", ex);
+            plugin.getLogger().severe("Offline payments file save failed.");
         }
     }
 
@@ -528,26 +606,33 @@ public class JsonDBConnector extends BaseDBConnector
                         })
                 .create();
 
-        try
+        if (!file.isFile() || file.length() == 0)
         {
-            if (!file.exists())
-            {
-                file.createNewFile();
+            return; // nothing to load
+        }
 
-                return; // nothing to load from a new file
-            }
-
-            try (Reader reader = new FileReader(file))
+        try (Reader reader = Files.newBufferedReader(file.toPath(), StandardCharsets.UTF_8))
+        {
+            OfflinePaymentRecord[] records = gson.fromJson(reader, OfflinePaymentRecord[].class);
+            if (records != null)
             {
-                OfflinePaymentRecord[] records = gson.fromJson(reader, OfflinePaymentRecord[].class);
-                if (records != null)
+                for (OfflinePaymentRecord record : records)
                 {
-                    for (OfflinePaymentRecord record : records)
+                    if (record != null)
                     {
                         offlinePaymentRecords.add(record);
                     }
                 }
             }
+        }
+        catch (JsonParseException ex)
+        {
+            // Keep the unreadable file aside: payments are now persisted on every
+            // change, so otherwise the next save would silently overwrite it.
+            File backup = new File(this.dataLocation, file.getName() + ".corrupt-" + System.currentTimeMillis());
+            boolean kept = file.renameTo(backup);
+            plugin.getLogger().log(Level.SEVERE, "Offline payments file is corrupt"
+                    + (kept ? "; moved to " + backup.getName() : "") + ".", ex);
         }
         catch (IOException ex)
         {

@@ -30,7 +30,14 @@ public class VaultConnector implements Economy
             new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE, "Bank deletion is not supported.");
 
     private static final EconomyResponse INVALID_AMOUNT =
-            new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE, "Amount must be positive.");
+            new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE, "Amount must be a positive, finite number.");
+
+    private static final EconomyResponse INVALID_PLAYER_AMOUNT =
+            new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
+                    "Amount must be a finite, non-negative number.");
+
+    private static final EconomyResponse ACCOUNT_FROZEN =
+            new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE, "Account is frozen.");
 
     private final Plugin       plugin;
     private final EconomyFuncs economyFuncs;
@@ -43,6 +50,10 @@ public class VaultConnector implements Economy
         this.economyFuncs = economyFuncs;
         this.rpc          = rpc;
         this.bankService  = bankService;
+
+        // Bank transfers move funds in and out of the master wallet too, so they must serialize
+        // on the same lock as the Vault player deposit/withdraw path.
+        this.bankService.shareMasterWalletLock(economyFuncs.getMasterWalletLock());
     }
 
     @Override
@@ -198,15 +209,36 @@ public class VaultConnector implements Economy
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer offlinePlayer, double amount)
     {
+        if (!Double.isFinite(amount) || amount < 0)
+        {
+            return INVALID_PLAYER_AMOUNT;
+        }
+
         if (!economyFuncs.hasWallet(offlinePlayer))
         {
             return NO_WALLET;
         }
+
+        if (economyFuncs.isFrozen(offlinePlayer))
+        {
+            return ACCOUNT_FROZEN;
+        }
+
+        // Fetch once up front: gives an accurate "insufficient funds" message without attempting
+        // the send, and lets the post-withdraw balance be computed rather than re-fetched.
+        double oldBalance = economyFuncs.getBalance(offlinePlayer);
+
+        if (oldBalance < amount)
+        {
+            return new EconomyResponse(amount, oldBalance, EconomyResponse.ResponseType.FAILURE,
+                    "Insufficient funds.");
+        }
+
         boolean success = economyFuncs.removeBalanceFP(offlinePlayer, amount);
-        double newBalance = economyFuncs.getBalance(offlinePlayer);
+        double newBalance = success ? oldBalance - amount : oldBalance;
         return new EconomyResponse(amount, newBalance,
                 success ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
-                success ? null : "Insufficient funds.");
+                success ? null : "Withdrawal failed.");
     }
 
     @Override
@@ -243,16 +275,26 @@ public class VaultConnector implements Economy
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer offlinePlayer, double amount)
     {
+        if (!Double.isFinite(amount) || amount < 0)
+        {
+            return INVALID_PLAYER_AMOUNT;
+        }
+
         if (!economyFuncs.hasWallet(offlinePlayer))
         {
             return NO_WALLET;
+        }
+
+        if (economyFuncs.isFrozen(offlinePlayer))
+        {
+            return ACCOUNT_FROZEN;
         }
 
         boolean success = economyFuncs.addBalanceTP(offlinePlayer, amount);
         double newBalance = economyFuncs.getBalance(offlinePlayer);
         return new EconomyResponse(amount, newBalance,
                 success ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
-                success ? null : "Insufficient funds.");
+                success ? null : "Deposit failed (server wallet has insufficient funds or the node is unavailable).");
     }
 
     @Override
@@ -350,6 +392,11 @@ public class VaultConnector implements Economy
             return BANK_NOT_FOUND;
         }
 
+        if (!Double.isFinite(amount) || amount < 0)
+        {
+            return INVALID_AMOUNT;
+        }
+
         double balance = bankService.getBankBalance(name);
         boolean has = balance >= amount;
         return new EconomyResponse(amount, balance,
@@ -365,7 +412,7 @@ public class VaultConnector implements Economy
             return BANKS_DISABLED;
         }
 
-        if (amount <= 0)
+        if (!Double.isFinite(amount) || amount <= 0)
         {
             return INVALID_AMOUNT;
         }
@@ -398,7 +445,7 @@ public class VaultConnector implements Economy
             return BANKS_DISABLED;
         }
 
-        if (amount <= 0)
+        if (!Double.isFinite(amount) || amount <= 0)
         {
             return INVALID_AMOUNT;
         }

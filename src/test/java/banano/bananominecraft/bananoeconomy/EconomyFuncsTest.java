@@ -536,6 +536,7 @@ class EconomyFuncsTest {
     void freezePlayer_player_returnsTrue_andMarksRecordFrozen() {
         PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false);
         when(db.getPlayerRecord(player)).thenReturn(record);
+        when(db.updatePlayerRecord(record)).thenReturn(true);
 
         assertTrue(economyFuncs.freezePlayer(player));
         assertTrue(record.isFrozen(), "Record should be marked frozen after call");
@@ -554,6 +555,7 @@ class EconomyFuncsTest {
     void freezePlayer_offlinePlayer_returnsTrue_andMarksRecordFrozen() {
         PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Bob", WALLET, false);
         when(db.getOfflinePlayerRecord(offlinePlayer)).thenReturn(record);
+        when(db.updatePlayerRecord(record)).thenReturn(true);
 
         assertTrue(economyFuncs.freezePlayer(offlinePlayer));
         assertTrue(record.isFrozen(), "Record should be marked frozen after call");
@@ -572,6 +574,7 @@ class EconomyFuncsTest {
     void unfreezePlayer_player_returnsTrue_andClearsRecordFrozen() {
         PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, true);
         when(db.getPlayerRecord(player)).thenReturn(record);
+        when(db.updatePlayerRecord(record)).thenReturn(true);
 
         assertTrue(economyFuncs.unfreezePlayer(player));
         assertFalse(record.isFrozen(), "Record should no longer be frozen after call");
@@ -590,10 +593,132 @@ class EconomyFuncsTest {
     void unfreezePlayer_offlinePlayer_returnsTrue_andClearsRecordFrozen() {
         PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Bob", WALLET, true);
         when(db.getOfflinePlayerRecord(offlinePlayer)).thenReturn(record);
+        when(db.updatePlayerRecord(record)).thenReturn(true);
 
         assertTrue(economyFuncs.unfreezePlayer(offlinePlayer));
         assertFalse(record.isFrozen(), "Record should no longer be frozen after call");
         verify(db).updatePlayerRecord(record);
+    }
+
+    // --- freeze/unfreeze persistence failures ---
+
+    @Test
+    void freezePlayer_player_returnsFalse_andRollsBack_whenPersistFails() {
+        PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false);
+        when(db.getPlayerRecord(player)).thenReturn(record);
+        when(db.updatePlayerRecord(record)).thenReturn(false);
+
+        assertFalse(economyFuncs.freezePlayer(player));
+        assertFalse(record.isFrozen(), "In-memory frozen flag must be rolled back on DB failure");
+    }
+
+    @Test
+    void unfreezePlayer_offlinePlayer_returnsFalse_andRollsBack_whenPersistFails() {
+        PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Bob", WALLET, true);
+        when(db.getOfflinePlayerRecord(offlinePlayer)).thenReturn(record);
+        when(db.updatePlayerRecord(record)).thenReturn(false);
+
+        assertFalse(economyFuncs.unfreezePlayer(offlinePlayer));
+        assertTrue(record.isFrozen(), "In-memory frozen flag must be rolled back on DB failure");
+    }
+
+    // --- accountCreate(Player) ---
+
+    @Test
+    void accountCreate_newPlayer_createsRecord_whenWalletValid() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(rpc.accountCreate(-1)).thenReturn(WALLET);
+        when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(false);
+        when(db.createPlayerRecord(player, WALLET))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(db).createPlayerRecord(player, WALLET);
+    }
+
+    @Test
+    void accountCreate_newPlayer_returnsFalse_whenCreationFails() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(rpc.accountCreate(-1)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+    }
+
+    @Test
+    void accountCreate_newPlayer_returnsFalse_whenRetryReturnsSentinel() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(rpc.accountCreate(-1)).thenReturn(WALLET, RPC.ACCOUNT_CREATION_FAILED);
+        when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(true);
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+        verify(db, never()).isAlreadyAssignedToOtherPlayer(eq(RPC.ACCOUNT_CREATION_FAILED), any(Player.class));
+    }
+
+    @Test
+    void accountCreate_newPlayer_returnsFalse_whenAddressInvalid() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(rpc.accountCreate(-1)).thenReturn("not-an-address");
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+    }
+
+    @Test
+    void accountCreate_existingValidRecord_doesNotCreateAccount() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(true);
+        when(db.getPlayerRecord(player))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(rpc, never()).accountCreate(anyInt());
+        verify(db, never()).updatePlayerWallet(any(Player.class), anyString());
+    }
+
+    @Test
+    void accountCreate_existingSentinelRecord_isRepaired() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(true);
+        when(db.getPlayerRecord(player)).thenReturn(
+                new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
+        when(rpc.accountCreate(-1)).thenReturn(WALLET);
+        when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(false);
+        when(db.updatePlayerWallet(player, WALLET)).thenReturn(true);
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(db).updatePlayerWallet(player, WALLET);
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+    }
+
+    @Test
+    void accountCreate_existingSentinelRecord_returnsFalse_whenRepairCreationFails() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(true);
+        when(db.getPlayerRecord(player)).thenReturn(
+                new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
+        when(rpc.accountCreate(-1)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(db, never()).updatePlayerWallet(any(Player.class), anyString());
+    }
+
+    @Test
+    void accountCreate_existingSentinelRecord_returnsFalse_whenPersistFails() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(true);
+        when(db.getPlayerRecord(player)).thenReturn(
+                new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
+        when(rpc.accountCreate(-1)).thenReturn(WALLET);
+        when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(false);
+        when(db.updatePlayerWallet(player, WALLET)).thenReturn(false);
+
+        assertFalse(economyFuncs.accountCreate(player));
     }
 
     // --- accountExists(Player) ---

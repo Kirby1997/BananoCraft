@@ -18,6 +18,7 @@ import banano.bananominecraft.bananoeconomy.io.VaultConnector;
 import banano.bananominecraft.bananoeconomy.services.BankService;
 import banano.bananominecraft.bananoeconomy.services.RepresentativeService;
 import banano.bananominecraft.bananoeconomy.trackers.BukkitTaskTracker;
+import banano.bananominecraft.bananoeconomy.validation.Validator;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
@@ -107,11 +108,22 @@ public final class BananoEconomyMain extends JavaPlugin
         setupBananoWalletService();
         getLogger().info("BananoWalletService registered.");
 
-        setupWallet();
-        getLogger().info("Wallet setup complete.");
+        // Check the node is reachable before touching wallets: an unreachable node must never be
+        // mistaken for a missing wallet (which would trigger wallet creation / config rewrites).
+        if (this.rpc.ping())
+        {
+            setupWallet();
+            getLogger().info("Wallet setup complete.");
 
-        setupBankWallet();
-        getLogger().info("Bank wallet setup complete.");
+            setupBankWallet();
+            getLogger().info("Bank wallet setup complete.");
+        }
+        else
+        {
+            getLogger().severe("Cannot reach the Banano node at " + redactNodeUrl(this.configEngine.getNodeAddress())
+                    + " — skipping wallet setup. Economy features will fail until the node is reachable"
+                    + " and the server is restarted.");
+        }
 
         this.webSocket.connect();
         getLogger().info("WebSocket connecting to " + this.configEngine.getWebsocketUrl());
@@ -169,10 +181,23 @@ public final class BananoEconomyMain extends JavaPlugin
             return;
         }
 
-        if (!this.rpc.bankWalletExists())
+        RPC.WalletStatus status = this.rpc.bankWalletStatus();
+
+        if (status == RPC.WalletStatus.UNREACHABLE)
+        {
+            getLogger().severe("Could not verify the bank wallet on the node — not creating one."
+                    + " Bank accounts will not work until this is resolved and the server restarted.");
+            return;
+        }
+
+        if (status == RPC.WalletStatus.MISSING)
         {
             getLogger().warning("Bank wallet not found on node — creating now.");
-            this.rpc.bankWalletCreate();
+            if (!this.rpc.bankWalletCreate())
+            {
+                getLogger().severe("Bank wallet creation failed — bank accounts will not work.");
+                return;
+            }
         }
         else
         {
@@ -184,22 +209,60 @@ public final class BananoEconomyMain extends JavaPlugin
 
     private void setupWallet()
     {
-        if (!this.rpc.wallet_exists())
+        RPC.WalletStatus status = this.rpc.walletStatus();
+
+        if (status == RPC.WalletStatus.UNREACHABLE)
+        {
+            getLogger().severe("Could not verify the master wallet on the node — not creating one."
+                    + " Economy features will fail until this is resolved and the server restarted.");
+            return;
+        }
+
+        if (status == RPC.WalletStatus.MISSING)
         {
             getLogger().warning("Master wallet not found — creating wallet now.");
-            this.rpc.walletCreate(); // persists walletID via ConfigEngine.save()
-
-            String masterWallet = this.rpc.accountCreate(0);
-            getLogger().info("Master wallet created: " + masterWallet);
-
-            // Persist through ConfigEngine so the value is consistent with all
-            // other config writes and is included in the next save() call.
-            this.configEngine.setMasterWallet(masterWallet);
-            this.configEngine.save();
+            if (!this.rpc.walletCreate()) // persists walletID via ConfigEngine.save()
+            {
+                getLogger().severe("Master wallet creation failed — economy features will not work.");
+                return;
+            }
+        }
+        else if (Validator.validateAddress(this.configEngine.getMasterWallet()))
+        {
+            getLogger().info("Master wallet verified.");
+            return;
         }
         else
         {
-            getLogger().info("Master wallet verified.");
+            // Wallet exists but no valid master account was saved (e.g. an earlier
+            // account_create failed) — index 0 is deterministic, so derive it again.
+            getLogger().warning("Master wallet exists but no valid master account is configured — deriving it now.");
         }
+
+        String masterWallet = this.rpc.accountCreate(0);
+
+        if (RPC.ACCOUNT_CREATION_FAILED.equals(masterWallet) || !Validator.validateAddress(masterWallet))
+        {
+            getLogger().severe("Master account creation failed (got '" + masterWallet
+                    + "') — not saving it to config. Economy features will not work.");
+            return;
+        }
+
+        getLogger().info("Master wallet created: " + masterWallet);
+
+        // Persist through ConfigEngine so the value is consistent with all
+        // other config writes and is included in the next save() call.
+        this.configEngine.setMasterWallet(masterWallet);
+        this.configEngine.save();
+    }
+
+    /** Strips any {@code user:password@} part from a node URL so it is safe to log. */
+    static String redactNodeUrl(String url)
+    {
+        if (url == null)
+        {
+            return "<not configured>";
+        }
+        return url.replaceFirst("(?<=://)[^/@]*@", "");
     }
 }

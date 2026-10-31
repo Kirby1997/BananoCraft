@@ -19,6 +19,13 @@ public interface IDBConnector
     PlayerRecord getPlayerRecord(Player player);
     PlayerRecord getOfflinePlayerRecord(OfflinePlayer player);
     boolean updatePlayerRecord(PlayerRecord playerRecord);
+
+    /**
+     * Persist a new wallet address for an existing player record and update the
+     * cached {@link PlayerRecord}. Returns {@code false} if the player has no
+     * record or the write failed.
+     */
+    boolean updatePlayerWallet(Player player, String wallet);
     PlayerRecord createPlayerRecord(Player player, String walletAddress);
     boolean isAlreadyAssignedToOtherPlayer(String walletAddress, Player currentPlayer);
     void unloadPlayerRecord(Player player);

@@ -47,6 +47,12 @@ public class EconomyFuncs
         this.configEngine = configEngine;
     }
 
+    /** The lock serializing blocks on the master-wallet account; shared with BankService. */
+    public ReentrantLock getMasterWalletLock()
+    {
+        return this.masterWalletLock;
+    }
+
     /** Returns the (lazily created) lock serializing sends from the given wallet address. */
     private ReentrantLock lockForWallet(String wallet)
     {
@@ -557,6 +563,18 @@ public class EconomyFuncs
     public boolean isFrozen(Player player)
     {
         PlayerRecord playerRecord = this.db.getPlayerRecord(player);
+
+        if (playerRecord != null)
+        {
+            return playerRecord.isFrozen();
+        }
+
+        return false;
+    }
+
+    public boolean isFrozen(OfflinePlayer player)
+    {
+        PlayerRecord playerRecord = this.db.getOfflinePlayerRecord(player);
 
         if (playerRecord != null)
         {

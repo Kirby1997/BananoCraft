@@ -321,6 +321,57 @@ class BankServiceTest
         assertFalse(service.withdraw(BANK_NAME, 40.0));
     }
 
+    @Test
+    void DepositReceivesBlockIntoBankUsingBankWalletId() throws TransactionError
+    {
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenReturn("block1");
+
+        assertTrue(service.deposit(BANK_NAME, 50.0));
+        verify(rpc).receiveBlock(BANK_WALLET, BANK_ADDR, "block1");
+    }
+
+    @Test
+    void DepositStillSucceedsWhenReceiveFails() throws TransactionError
+    {
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenReturn("block1");
+        when(rpc.receiveBlock(BANK_WALLET, BANK_ADDR, "block1")).thenThrow(new TransactionError("x"));
+
+        assertTrue(service.deposit(BANK_NAME, 50.0));
+    }
+
+    @Test
+    void WithdrawReceivesBlockIntoMasterWallet() throws TransactionError
+    {
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(BANK_ADDR)).thenReturn(100.0);
+        when(rpc.sendTransaction(BANK_ADDR, MASTER_ADDR, 40.0, BANK_WALLET)).thenReturn("block2");
+
+        assertTrue(service.withdraw(BANK_NAME, 40.0));
+        verify(rpc).receiveBlock(MASTER_ADDR, "block2");
+    }
+
+    @Test
+    void DepositAndWithdrawRejectNonFiniteAmounts() throws TransactionError
+    {
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(anyString())).thenReturn(Double.POSITIVE_INFINITY);
+
+        assertFalse(service.deposit(BANK_NAME, Double.NaN));
+        assertFalse(service.deposit(BANK_NAME, Double.POSITIVE_INFINITY));
+        assertFalse(service.withdraw(BANK_NAME, Double.NaN));
+        assertFalse(service.withdraw(BANK_NAME, Double.POSITIVE_INFINITY));
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble(), anyString());
+    }
+
     // -------------------------------------------------------------------------
     // getBanks / isBankOwner / isBankMember
     // -------------------------------------------------------------------------

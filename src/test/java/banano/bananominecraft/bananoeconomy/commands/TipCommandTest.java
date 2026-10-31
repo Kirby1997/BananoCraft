@@ -127,6 +127,20 @@ class TipCommandTest
     }
 
     @Test
+    void nonFiniteAmount_isRejected() throws TransactionError
+    {
+        PlayerMock bob = server.addPlayer("Bob");
+        PlayerRecord bobRecord = new PlayerRecord(bob.getUniqueId().toString(), "Bob", TARGET_WALLET, false);
+        when(db.getPlayerRecord(bob)).thenReturn(bobRecord);
+
+        runAndDrain("NaN", "Bob");
+        runAndDrain("Infinity", "Bob");
+        runAndDrain("-Infinity", "Bob");
+
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
+    }
+
+    @Test
     void unknownTarget_isRejected() throws TransactionError
     {
         when(configEngine.getEnableOfflinePayment()).thenReturn(false);
@@ -173,6 +187,34 @@ class TipCommandTest
 
         verify(rpc).getBalance(SENDER_WALLET);
         verify(rpc).sendTransaction(SENDER_WALLET, TARGET_WALLET, 3.0);
+    }
+
+    @Test
+    void tipWithAllKeyword_resolvesBalanceOffTheCommandThread() throws TransactionError
+    {
+        PlayerMock bob = server.addPlayer("Bob");
+        PlayerRecord bobRecord = new PlayerRecord(bob.getUniqueId().toString(), "Bob", TARGET_WALLET, false);
+        when(db.getPlayerRecord(bob)).thenReturn(bobRecord);
+        when(rpc.getBalance(SENDER_WALLET)).thenReturn(3.0);
+
+        command.onCommand(alice, null, "tip", new String[] { "all", "Bob" });
+        verify(rpc, never()).getBalance(anyString());
+
+        server.getScheduler().waitAsyncTasksFinished();
+        verify(rpc).getBalance(SENDER_WALLET);
+    }
+
+    @Test
+    void tipWithAllKeyword_zeroBalance_doesNotSend() throws TransactionError
+    {
+        PlayerMock bob = server.addPlayer("Bob");
+        PlayerRecord bobRecord = new PlayerRecord(bob.getUniqueId().toString(), "Bob", TARGET_WALLET, false);
+        when(db.getPlayerRecord(bob)).thenReturn(bobRecord);
+        when(rpc.getBalance(SENDER_WALLET)).thenReturn(0.0);
+
+        runAndDrain("all", "Bob");
+
+        verify(rpc, never()).sendTransaction(anyString(), anyString(), anyDouble());
     }
 
     @Test
