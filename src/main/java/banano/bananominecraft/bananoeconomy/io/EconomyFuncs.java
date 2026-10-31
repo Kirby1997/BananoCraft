@@ -123,7 +123,7 @@ public class EconomyFuncs
 
     public boolean freezePlayer(String playerName)
     {
-        Player player = Bukkit.getPlayer(playerName);
+        Player player = Bukkit.getPlayerExact(playerName);
 
         if (player != null)
         {
@@ -197,7 +197,7 @@ public class EconomyFuncs
 
     public boolean unfreezePlayer(String playerName)
     {
-        Player player = Bukkit.getPlayer(playerName);
+        Player player = Bukkit.getPlayerExact(playerName);
 
         if (player != null)
         {

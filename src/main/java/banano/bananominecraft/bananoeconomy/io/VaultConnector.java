@@ -106,7 +106,7 @@ public class VaultConnector implements Economy
     @Deprecated
     public boolean hasAccount(String playerName)
     {
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
         return player != null && economyFuncs.hasWallet(player);
     }
 
@@ -137,7 +137,7 @@ public class VaultConnector implements Economy
     @Deprecated
     public double getBalance(String playerName)
     {
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
         return player != null ? economyFuncs.getBalance(player) : 0;
     }
 
@@ -198,7 +198,7 @@ public class VaultConnector implements Economy
     @Deprecated
     public EconomyResponse withdrawPlayer(String playerName, double amount)
     {
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
         if (player == null)
         {
             return NOT_ONLINE;
@@ -262,7 +262,7 @@ public class VaultConnector implements Economy
     @Deprecated
     public EconomyResponse depositPlayer(String playerName, double amount)
     {
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
 
         if (player == null)
         {
@@ -323,7 +323,7 @@ public class VaultConnector implements Economy
             return BANKS_DISABLED;
         }
 
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
         if (player == null)
         {
             return NOT_ONLINE;
@@ -471,7 +471,7 @@ public class VaultConnector implements Economy
             return BANKS_DISABLED;
         }
 
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
 
         if (player == null)
         {
@@ -505,7 +505,7 @@ public class VaultConnector implements Economy
             return BANKS_DISABLED;
         }
 
-        Player player = Bukkit.getServer().getPlayer(playerName);
+        Player player = Bukkit.getServer().getPlayerExact(playerName);
 
         if (player == null)
         {
