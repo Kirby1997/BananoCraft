@@ -18,7 +18,7 @@ import static org.mockito.Mockito.*;
 class BankServiceTest
 {
     private static final String BANK_NAME    = "treasury";
-    private static final String BANK_ADDR    = "ban_3bankaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+    private static final String BANK_ADDR    = "ban_3bankaddressxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
     private static final String MASTER_ADDR  = "ban_1masterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
     private static final String BANK_WALLET  = "BANK-WALLET-ID";
     private static final String OWNER_UUID   = "00000000-0000-0000-0000-000000000001";
@@ -104,6 +104,34 @@ class BankServiceTest
         assertNotNull(service.createBank("treasury",    OWNER_UUID));
         assertNotNull(service.createBank("guild-vault", OWNER_UUID));
         assertNotNull(service.createBank("bank_1",      OWNER_UUID));
+    }
+
+    private static final String OTHER_BANK_ADDR = "ban_3otherbankxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+
+    @Test
+    void CreateBankSkipsAddressAlreadyOwnedByAnotherBank()
+    {
+        // After the bank wallet is restored from its seed, the node can re-issue an existing bank's address.
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getAllBankNames()).thenReturn(java.util.List.of("old-bank"));
+        when(db.getBankRecord("old-bank")).thenReturn(new BankRecord("old-bank", BANK_ADDR, OWNER_UUID, 0L));
+        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(BANK_ADDR, OTHER_BANK_ADDR);
+        when(db.createBankRecord(any())).thenReturn(true);
+
+        BankRecord created = service.createBank("new-bank", OWNER_UUID);
+
+        assertNotNull(created);
+        assertEquals(OTHER_BANK_ADDR, created.getAddress());
+    }
+
+    @Test
+    void CreateBankRejectsInvalidNodeAddress()
+    {
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn("not-an-address");
+
+        assertNull(service.createBank("treasury", OWNER_UUID));
+        verify(db, never()).createBankRecord(any());
     }
 
     // -------------------------------------------------------------------------

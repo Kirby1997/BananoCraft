@@ -6,10 +6,13 @@ import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 import banano.bananominecraft.bananoeconomy.trackers.TaskTracker;
+import banano.bananominecraft.bananoeconomy.validation.Validator;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
@@ -47,6 +50,7 @@ public class BankService
     private volatile ReentrantLock masterWalletLock = new ReentrantLock(true);
 
     private static final int    BANK_NAME_MAX_LENGTH = 64;
+    private static final int    MAX_ADDRESS_ATTEMPTS = 10;
     private static final String BANK_NAME_PATTERN    = "[a-zA-Z0-9_-]+";
 
     public BankService(Plugin plugin, ConfigEngine configEngine, RPC rpc, IDBConnector db)
@@ -119,10 +123,39 @@ public class BankService
             return null;
         }
 
-        String address = rpc.accountCreate(-1, configEngine.getBankWalletId());
-        if (RPC.ACCOUNT_CREATION_FAILED.equals(address))
+        // After the bank wallet is re-created from its seed on a new node, the node's deterministic
+        // index can rewind and hand out an address an existing bank already owns.
+        Set<String> takenAddresses = new HashSet<>();
+        for (String existingName : db.getAllBankNames())
         {
-            plugin.getLogger().severe("Failed to derive bank address for '" + name + "'.");
+            BankRecord existing = db.getBankRecord(existingName);
+            if (existing != null && existing.getAddress() != null)
+            {
+                takenAddresses.add(existing.getAddress());
+            }
+        }
+
+        String address = null;
+        for (int attempt = 0; attempt < MAX_ADDRESS_ATTEMPTS; attempt++)
+        {
+            String candidate = rpc.accountCreate(-1, configEngine.getBankWalletId());
+            if (candidate == null || RPC.ACCOUNT_CREATION_FAILED.equals(candidate)
+                    || !Validator.validateAddress(candidate))
+            {
+                plugin.getLogger().severe("Failed to derive bank address for '" + name + "'.");
+                return null;
+            }
+            if (!takenAddresses.contains(candidate))
+            {
+                address = candidate;
+                break;
+            }
+        }
+
+        if (address == null)
+        {
+            plugin.getLogger().severe("Could not derive an unused bank address for '" + name + "' after "
+                    + MAX_ADDRESS_ATTEMPTS + " attempts — aborting.");
             return null;
         }
 
