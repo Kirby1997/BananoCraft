@@ -6,8 +6,11 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.logging.Level;
@@ -62,11 +65,18 @@ public class SecretManager
                 && !isEncrypted(value);
     }
 
+    /**
+     * Encrypts {@code plaintext} into an {@code ENC:} value.
+     *
+     * @return the ciphertext, or {@code null} if no key is loaded or encryption
+     *         failed. Never returns the plaintext, so callers cannot accidentally
+     *         persist an unencrypted secret.
+     */
     public String encrypt(String plaintext)
     {
-        if (key == null)
+        if (key == null || plaintext == null)
         {
-            return plaintext;
+            return null;
         }
         try
         {
@@ -86,7 +96,7 @@ public class SecretManager
         catch (Exception e)
         {
             logger.log(Level.SEVERE, "Failed to encrypt secret.", e);
-            return plaintext;
+            return null;
         }
     }
 
@@ -146,8 +156,18 @@ public class SecretManager
                     return new SecretKeySpec(keyBytes, "AES");
                 }
 
-                logger.warning("secret.key has unexpected length — regenerating. "
-                        + "Previously encrypted config values must be re-entered in plaintext.");
+                // Never overwrite a key we cannot use: it may be the only way to
+                // recover encrypted seeds (e.g. after a botched copy). Move it aside.
+                File bad = new File(keyFile.getParentFile(),
+                        keyFile.getName() + ".bad-" + System.currentTimeMillis());
+                boolean moved = keyFile.renameTo(bad);
+                logger.severe("secret.key has an unexpected length (" + keyBytes.length + " bytes, expected "
+                        + (KEY_BITS / 8) + "). "
+                        + (moved ? "It was renamed to " + bad.getName() + "." : "It could not be renamed.")
+                        + " Config values will NOT be encrypted or decrypted this run. Restore the correct"
+                        + " secret.key, or re-enter the seeds in plaintext and restart to generate a new key.");
+
+                return null;
             }
 
             KeyGenerator kg = KeyGenerator.getInstance("AES");
@@ -160,14 +180,19 @@ public class SecretManager
                 parent.mkdirs();
             }
 
-            Files.write(keyFile.toPath(), newKey.getEncoded());
+            Path keyPath = keyFile.toPath();
+            createOwnerOnlyFile(keyPath);
 
-            // Best-effort owner-only permissions (no-op on Windows).
-            keyFile.setReadable(false, false);
-            keyFile.setReadable(true, true);
-            keyFile.setWritable(false, false);
-            keyFile.setWritable(true, true);
-            keyFile.setExecutable(false);
+            try
+            {
+                Files.write(keyPath, newKey.getEncoded());
+            }
+            catch (IOException e)
+            {
+                // Don't leave a truncated key behind for the next startup to trip over.
+                Files.deleteIfExists(keyPath);
+                throw e;
+            }
 
             logger.info("Generated new secret.key for config encryption.");
 
@@ -179,5 +204,32 @@ public class SecretManager
 
             return null;
         }
+    }
+
+    /**
+     * Create a new, empty file readable and writable only by its owner. On POSIX
+     * file systems the permissions are applied atomically at creation, so the file
+     * is never briefly world-readable; elsewhere (e.g. Windows) a best-effort
+     * owner-only fallback is applied straight after creation.
+     *
+     * @throws java.nio.file.FileAlreadyExistsException if the file already exists
+     */
+    static void createOwnerOnlyFile(Path path) throws IOException
+    {
+        if (path.getFileSystem().supportedFileAttributeViews().contains("posix"))
+        {
+            Files.createFile(path, PosixFilePermissions.asFileAttribute(
+                    PosixFilePermissions.fromString("rw-------")));
+            return;
+        }
+
+        Files.createFile(path);
+
+        File file = path.toFile();
+        file.setReadable(false, false);
+        file.setReadable(true, true);
+        file.setWritable(false, false);
+        file.setWritable(true, true);
+        file.setExecutable(false, false);
     }
 }
