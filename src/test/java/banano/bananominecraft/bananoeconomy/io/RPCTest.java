@@ -755,6 +755,14 @@ class RPCTest
     }
 
     @Test
+    void walletCreate_refusesBlankSeed() throws Exception
+    {
+        when(configEngine.getWalletSeed()).thenReturn("");
+        assertFalse(rpc.walletCreate());
+        verify(http, never()).post(anyString(), anyString());
+    }
+
+    @Test
     void walletCreate_refusesToSendSeedToPublicPlainHttpNode() throws Exception
     {
         when(configEngine.getNodeAddress()).thenReturn("http://203.0.113.5:7072"); // TEST-NET-3, public

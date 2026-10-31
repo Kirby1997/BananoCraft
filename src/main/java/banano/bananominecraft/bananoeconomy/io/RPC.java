@@ -800,6 +800,12 @@ public class RPC
      */
     private String createWalletFromSeed(String seed, String label)
     {
+        if (seed == null || seed.isBlank())
+        {
+            plugin.getLogger().severe(label + " refused: no wallet seed is configured.");
+            return null;
+        }
+
         // The seed gives custody of every account in the wallet, so never send it in cleartext
         // across a public network.
         if (!isSeedSafeEndpoint(configEngine.getNodeAddress()))

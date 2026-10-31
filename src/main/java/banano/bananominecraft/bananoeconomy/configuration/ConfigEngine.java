@@ -70,19 +70,38 @@ public class ConfigEngine
      *  own representatives_online list" rather than always trusting whatever the node reports. */
     private List<String> representatives = Collections.emptyList();
 
+    private final boolean hadExistingSecrets;
+
     public ConfigEngine(Plugin plugin)
     {
         this.plugin        = plugin;
+        // Checked before SecretManager runs (it creates secret.key if missing): either file means this
+        // server has had a wallet seed before, so a missing walletSeed is data loss, not a fresh install.
+        this.hadExistingSecrets = hasExistingSecrets(plugin.getDataFolder());
         this.secretManager = new SecretManager(
                 new File(plugin.getDataFolder(), "secret.key"),
                 plugin.getLogger());
         initialiseConfig(plugin.getConfig());
     }
 
-    public void reload()
+    public synchronized void reload()
     {
         this.plugin.reloadConfig();
         initialiseConfig(this.plugin.getConfig());
+    }
+
+    private static boolean hasExistingSecrets(File dataFolder)
+    {
+        if (dataFolder == null)
+        {
+            return false;
+        }
+        if (new File(dataFolder, "secret.key").exists())
+        {
+            return true;
+        }
+        String[] backups = dataFolder.list((dir, name) -> name.startsWith("seed-backup") && name.endsWith(".txt"));
+        return backups != null && backups.length > 0;
     }
 
     private void initialiseConfig(FileConfiguration configuration)
@@ -102,7 +121,15 @@ public class ConfigEngine
         boolean seedJustGenerated = false;
         String rawSeed = configuration.getString("walletSeed", "");
         boolean seedMissing = rawSeed.isEmpty() || rawSeed.equals(SEED_PLACEHOLDER);
-        if (seedMissing && isWalletIdUnset(this.walletId))
+        if (seedMissing && hadExistingSecrets)
+        {
+            // e.g. config.yml truncated or edited: never silently bind the server to a new wallet.
+            plugin.getLogger().severe("walletSeed is missing from config.yml, but this server already has "
+                    + "secret.key or a seed-backup file. Refusing to generate a new seed: restore walletSeed "
+                    + "(from your seed-backup file) and walletID in config.yml, then restart.");
+            this.walletSeed = "";
+        }
+        else if (seedMissing && isWalletIdUnset(this.walletId))
         {
             // Fresh install — generate a seed now and write a backup file the admin must secure.
             String generated = generateSeed();
@@ -379,7 +406,7 @@ public class ConfigEngine
      *
      * @return {@code true} on success
      */
-    public boolean save()
+    public synchronized boolean save()
     {
         FileConfiguration config = this.plugin.getConfig();
 
