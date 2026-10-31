@@ -78,6 +78,50 @@ You may set `walletId` to the ID of the wallet created by your `wallet_create` R
 Doing so allows you to use previously created wallet.
 Of course, the specified node should contain the wallet ID and the wallet has to contain the specified master account.
 
+## Representatives
+
+By default, `/representative set random` (and any internal automatic representative change,
+e.g. from a plugin verifying wallet ownership) picks from whatever the node currently reports
+as online. To pin a specific set of known-good representatives instead — recommended, since this
+affects Nano/Banano network decentralization — list them in `config.yml`:
+
+```yaml
+representatives:
+  - "ban_1representativeaddress..."
+  - "ban_1anotherrepresentativeaddress..."
+```
+
+Leave the list empty (the default) to always fall back to the node's online list.
+
+## Cross-Plugin API (for plugin developers)
+
+BananoCraft exposes a small, dependency-free `BananoWalletService` API via Bukkit's
+`ServicesManager`, so other plugins can look up a player's wallet address/balance, send BAN on
+their behalf, and manage their representative — without needing an online `Player` object or
+BananoCraft's full dependency tree. Depend on the slim `api` classifier artifact rather than the
+full plugin jar (mirrors how this project itself depends on `VaultAPI` rather than all of Vault):
+
+```xml
+<dependency>
+    <groupId>Banano.BananoMinecraft</groupId>
+    <artifactId>BananoEconomy</artifactId>
+    <version>1.2.6-SNAPSHOT</version>
+    <classifier>api</classifier>
+    <scope>provided</scope>
+</dependency>
+```
+
+```java
+RegisteredServiceProvider<BananoWalletService> registration =
+        Bukkit.getServicesManager().getRegistration(BananoWalletService.class);
+
+if (registration != null) {
+    BananoWalletService wallet = registration.getProvider();
+    String address = wallet.getAddress(playerId);
+    // ...
+}
+```
+
 Demo video:  https://www.youtube.com/watch?v=KR-cTu4XxLY
   
 ## Player Commands
@@ -104,6 +148,17 @@ balance to another player.
 
 Enables the player to withdraw a specified amount, or their whole wallet
 balance to another wallet address.
+
+`/representative set [ban_repaddress|random]` (alias `/rep set`)
+
+Sets the player's in-game wallet representative to a specific address, or
+to one chosen randomly from the pool configured in `representatives` in
+`config.yml` (or, if that list is empty, from whatever the node currently
+reports as online).
+
+`/representative get` (alias `/rep get`)
+
+Shows the player's currently set representative.
 
 ## Admin Commands
 

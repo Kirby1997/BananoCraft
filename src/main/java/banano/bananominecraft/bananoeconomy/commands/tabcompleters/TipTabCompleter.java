@@ -12,52 +12,52 @@ import org.bukkit.util.StringUtil;
 import java.util.ArrayList;
 import java.util.List;
 
-public class TipTabCompleter implements TabCompleter {
+public class TipTabCompleter implements TabCompleter
+{
+    private static final String ARG_ALL = "all";
 
     private final ConfigEngine configEngine;
 
-    public TipTabCompleter(ConfigEngine configEngine) {
+    public TipTabCompleter(ConfigEngine configEngine)
+    {
         this.configEngine = configEngine;
     }
 
     @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args)
+    {
         List<String> results = new ArrayList<>();
 
-        if(args.length == 1) {
-
-            results.add("all");
+        if(args.length == 1)
+        {
+            results.add(ARG_ALL);
 
             if(args[0] == null
-                    || args[0].length() == 0) {
-
+                    || args[0].length() == 0)
+            {
                 results.add("[amount]");
-
             }
-
         }
-        else if(args.length == 2) {
-
-            for (Player player : Bukkit.getOnlinePlayers()) {
+        else if(args.length == 2)
+        {
+            for (Player player : Bukkit.getOnlinePlayers())
+            {
                 results.add(player.getName());
             }
 
-            if(this.configEngine.getEnableOfflinePayment()) {
-
-                for(OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers()) {
+            if(this.configEngine.getEnableOfflinePayment())
+            {
+                for(OfflinePlayer offlinePlayer : Bukkit.getOfflinePlayers())
+                {
                     results.add(offlinePlayer.getName());
                 }
-
             }
-
         }
         else if(args.length == 3
                   && (args[2] == null
-                        || args[2].length() == 0)) {
-
+                        || args[2].length() == 0))
+        {
             results.add("[Message]");
-
         }
 
         return StringUtil.copyPartialMatches(args[args.length - 1], results, new ArrayList<>());

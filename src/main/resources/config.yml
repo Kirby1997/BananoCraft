@@ -5,6 +5,13 @@ walletID: "INSERT WALLET ID FROM NODE HERE"
 # Don't touch masterWallet unless you know what you're doing
 masterWallet: "INSERT MASTER WALLET HERE"
 
+# Bank accounts — uncomment bankWalletSeed and set it to enable Vault bank support.
+# On first startup the plaintext seed is automatically encrypted in-place.
+# Keep secret.key safe — losing it means the seed must be re-entered in plaintext.
+# Don't touch bankWalletID — it is auto-populated on first run.
+#bankWalletSeed: "INSERT BANK WALLET SEED HERE"
+#bankWalletID: ""
+
 # Database - for mongoDB, add the mongoURI (comment if using alternative)
 #mongoURI: "INSERT MONGOURI HERE"
 
@@ -24,3 +31,12 @@ exploreaccount: "https://creeper.banano.cc/explorer/account/" #banano
 #exploreaccount: "https://nanocrawler.cc/explorer/account/" #nano
 exploreblock: "https://creeper.banano.cc/explorer/block/" #banano
 #exploreblock: "https://nanocrawler.cc/explorer/block/" #nano
+
+# Representatives BananoCraft may assign to a player's account (via /representative set random, or
+# automatically after another plugin verifies wallet ownership by asking for a temporary
+# representative change). Leave empty to instead pick randomly from whatever the node
+# currently reports via representatives_online.
+representatives: []
+#representatives:
+#  - "ban_1representativeaddress..."
+#  - "ban_1anotherrepresentativeaddress..."

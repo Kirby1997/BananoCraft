@@ -1,8 +1,10 @@
 package banano.bananominecraft.bananoeconomy.db;
 
+import banano.bananominecraft.bananoeconomy.classes.BankRecord;
 import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import com.google.gson.*;
+import com.google.gson.reflect.TypeToken;
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
@@ -14,402 +16,542 @@ import java.lang.reflect.Type;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Level;
 
-public class JsonDBConnector extends BaseDBConnector {
+public class JsonDBConnector extends BaseDBConnector
+{
+    /** Sub-directory inside the plugin data folder used for all JSON files. */
+    private static final String DATA_DIRECTORY = "data";
 
-    private final String DATA_DIRECTORY = "data";
-    private File dataLocation;
+    /** Repeating auto-save interval in ticks (18 000 t = 15 minutes). */
+    private static final long SAVE_INTERVAL_TICKS = 18_000L;
+
     private final Plugin plugin;
+    private final File   dataLocation;
 
-    private HashMap<String,String> claimedWallets = new HashMap<>(); // Wallet, PlayerUUID
-    private List<OfflinePaymentRecord> offlinePaymentRecords = new ArrayList<>();
+    /**
+     * wallet address → player UUID string for every wallet that has ever been
+     * assigned.  Used by {@link #isAlreadyAssignedToOtherPlayer} to prevent
+     * duplicate wallet assignment.
+     *
+     * <p>Accessed from the async wallet-loader task AND from the main thread,
+     * so a {@link ConcurrentHashMap} is required.</p>
+     */
+    private final ConcurrentHashMap<String, String> claimedWallets = new ConcurrentHashMap<>();
 
-    public JsonDBConnector(Plugin plugin) {
+    /**
+     * In-memory list of pending offline payment notifications.
+     *
+     * <p>Accessed from the async tip / show-offline-tips tasks and from the
+     * main-thread auto-save task, so a {@link CopyOnWriteArrayList} is used.</p>
+     */
+    private final List<OfflinePaymentRecord> offlinePaymentRecords = new CopyOnWriteArrayList<>();
 
+    public JsonDBConnector(Plugin plugin)
+    {
         this.plugin = plugin;
-
-        initialiseDataDirectory();
+        this.dataLocation = initialiseDataDirectory();
         loadClaimedWallets();
-
-        Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, new Runnable() {
-            @Override
-            public void run() {
-                //methods
-                saveOfflinePaymentRecords();
-            }
-        }, 18000, 18000);
-
         loadOfflinePayments();
+        loadBanks();
+        loadBankMembers();
 
+        // Persist offline payments every 15 minutes in case of an unclean shutdown.
+        Bukkit.getScheduler().scheduleSyncRepeatingTask(plugin, this::saveOfflinePaymentRecords,
+                SAVE_INTERVAL_TICKS, SAVE_INTERVAL_TICKS);
     }
 
-    private void loadClaimedWallets() {
+    // -------------------------------------------------------------------------
+    // IDBConnector — lifecycle
+    // -------------------------------------------------------------------------
 
-        File dataSource = this.dataLocation;
-        claimedWallets = new HashMap<>();
+    @Override
+    public void close()
+    {
+        // Flush in-memory offline payments to disk so they survive a clean shutdown.
+        saveOfflinePaymentRecords();
+    }
 
-        new BukkitRunnable() {
+    // -------------------------------------------------------------------------
+    // IDBConnector — player records
+    // -------------------------------------------------------------------------
 
-            @Override
-            public void run() {
+    @Override
+    protected PlayerRecord loadPlayerRecord(Player player)
+    {
+        return getPlayerRecord(player.getUniqueId(), true);
+    }
 
-                if(dataSource.isDirectory()) {
+    @Override
+    public PlayerRecord getOfflinePlayerRecord(OfflinePlayer player)
+    {
+        return getPlayerRecord(player.getUniqueId(), false);
+    }
 
-                    for (final File fileEntry : dataSource.listFiles()) {
+    @Override
+    protected boolean insertPlayerRecord(PlayerRecord playerRecord)
+    {
+        File file = new File(this.dataLocation, playerRecord.getPlayerUUID() + ".json");
+        plugin.getLogger().info("Saving player file: " + file.getName());
 
-                        Gson gson = new GsonBuilder().create();
-
-                        try {
-                            Reader fileReader = new FileReader(fileEntry);
-
-                            PlayerRecord playerRecord = gson.fromJson(fileReader, PlayerRecord.class);
-
-                            fileReader.close();
-
-                            if (playerRecord != null) {
-
-                                claimedWallets.put(playerRecord.getWallet(), playerRecord.getPlayerUUID());
-
-                            }
-
-                        }
-                        catch (Exception ex) {
-                            ex.printStackTrace();
-                        }
-
-                    }
-
-                }
-
+        try
+        {
+            if (!file.exists())
+            {
+                file.createNewFile();
             }
 
-        }.runTaskAsynchronously(plugin);
+            try (Writer fileWriter = new FileWriter(file, false))
+            {
+                new GsonBuilder().create().toJson(playerRecord, fileWriter);
+            }
 
-    }
-
-    private void initialiseDataDirectory() {
-
-        this.dataLocation = new File(plugin.getDataFolder(), DATA_DIRECTORY);
-
-        if(!this.dataLocation.exists()) {
-
-            this.dataLocation.mkdirs();
-
+            plugin.getLogger().info("Player file '" + file.getName() + "' saved successfully.");
+            return true;
         }
-
+        catch (IOException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Player file save failed.", ex);
+        }
+        return false;
     }
 
     @Override
-    public void close() {
-
+    public boolean updatePlayerRecord(PlayerRecord playerRecord)
+    {
+        // Overwrite the entire file — same as insert for the JSON backend.
+        return insertPlayerRecord(playerRecord);
     }
 
     @Override
-    protected PlayerRecord loadPlayerRecord(Player player) {
-
-        return getPlayerRecord(player.getUniqueId(), true);
-
+    public boolean hasPlayerRecord(Player player)
+    {
+        return hasPlayerRecord(player.getUniqueId());
     }
 
-    private PlayerRecord getPlayerRecord(UUID playerUUID, boolean cacheRecord) {
+    @Override
+    public boolean hasPlayerRecord(OfflinePlayer player)
+    {
+        return hasPlayerRecord(player.getUniqueId());
+    }
 
-        if(this.playerRecords.containsKey(playerUUID)) {
+    @Override
+    public boolean isAlreadyAssignedToOtherPlayer(String walletAddress, Player currentPlayer)
+    {
+        String stored = claimedWallets.get(walletAddress);
+        return stored != null && !stored.equalsIgnoreCase(currentPlayer.getUniqueId().toString());
+    }
 
-            return this.playerRecords.get(playerUUID);
+    // -------------------------------------------------------------------------
+    // IDBConnector — offline payments
+    // -------------------------------------------------------------------------
 
+    @Override
+    public boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord)
+    {
+        if (paymentRecord == null)
+        {
+            return false;
         }
-        else {
 
-            try {
+        offlinePaymentRecords.add(paymentRecord);
 
-                File file = new File(this.dataLocation, playerUUID.toString() + ".json");
-                System.out.println("Loading player file from " + file.getAbsolutePath());
+        return true;
+    }
 
-                if(!file.exists()) {
+    @Override
+    public List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer)
+    {
+        if (forPlayer == null)
+        {
+            return new ArrayList<>();
+        }
 
-                    file.createNewFile();
+        return offlinePaymentRecords.stream()
+                .filter(r -> r.targetPlayerUUID().equals(forPlayer.getUniqueId()))
+                .toList();
+    }
 
+    @Override
+    public void deleteOfflinePaymentRecords(Player forPlayer)
+    {
+        if (forPlayer != null)
+        {
+            offlinePaymentRecords.removeIf(r -> r.targetPlayerUUID().equals(forPlayer.getUniqueId()));
+        }
+    }
+
+    @Override
+    public double getOfflinePaymentsTotal(Player forPlayer)
+    {
+        if (forPlayer == null)
+        {
+            return 0;
+        }
+
+        return offlinePaymentRecords.stream()
+                .filter(r -> r.targetPlayerUUID().equals(forPlayer.getUniqueId()))
+                .mapToDouble(OfflinePaymentRecord::paymentAmount)
+                .sum();
+    }
+
+    // -------------------------------------------------------------------------
+    // IDBConnector — bank accounts
+    // -------------------------------------------------------------------------
+
+    @Override
+    public boolean createBankRecord(BankRecord bank)
+    {
+        if (bankRecords.putIfAbsent(bank.getBankName(), bank) != null)
+        {
+            return false;
+        }
+
+        saveBanks();
+        return true;
+    }
+
+    @Override
+    public boolean bankNameExists(String bankName)
+    {
+        return bankRecords.containsKey(bankName);
+    }
+
+    @Override
+    public boolean deleteBankRecord(String bankName)
+    {
+        BankRecord removed = bankRecords.remove(bankName);
+
+        if (removed == null)
+        {
+            return false;
+        }
+
+        bankMembers.remove(bankName);
+        saveBanks();
+        saveBankMembers();
+
+        return true;
+    }
+
+    @Override
+    public List<String> getAllBankNames()
+    {
+        return new ArrayList<>(bankRecords.keySet());
+    }
+
+    @Override
+    public boolean addBankMember(String bankName, String playerUuid)
+    {
+        bankMembers.computeIfAbsent(bankName, k -> ConcurrentHashMap.newKeySet()).add(playerUuid);
+        saveBankMembers();
+
+        return true;
+    }
+
+    @Override
+    public boolean removeBankMember(String bankName, String playerUuid)
+    {
+        Set<String> members = bankMembers.get(bankName);
+
+        if (members == null)
+        {
+            return false;
+        }
+
+        boolean removed = members.remove(playerUuid);
+
+        if (removed)
+        {
+            saveBankMembers();
+        }
+
+        return removed;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers
+    // -------------------------------------------------------------------------
+
+    private File initialiseDataDirectory()
+    {
+        File dir = new File(plugin.getDataFolder(), DATA_DIRECTORY);
+
+        if (!dir.exists())
+        {
+            dir.mkdirs();
+        }
+
+        return dir;
+    }
+
+    /**
+     * Asynchronously reads every player JSON file in the data directory and
+     * builds the {@link #claimedWallets} map so that duplicate wallet detection
+     * works even for offline players.
+     */
+    private void loadClaimedWallets()
+    {
+        new BukkitRunnable()
+        {
+            @Override
+            public void run()
+            {
+                File[] files = dataLocation.listFiles();
+
+                if (files == null)
+                {
+                    return; // directory I/O error or not a directory
                 }
 
                 Gson gson = new GsonBuilder().create();
 
-                Reader fileReader = new FileReader(file);
-
-                PlayerRecord playerRecord = gson.fromJson(fileReader, PlayerRecord.class);
-
-                fileReader.close();
-
-                if(playerRecord != null) {
-
-                    if (cacheRecord
-                          && !playerRecords.containsKey(playerUUID)) {
-
-                        playerRecords.put(playerUUID, playerRecord);
-
+                for (File file : files)
+                {
+                    try (Reader reader = new FileReader(file))
+                    {
+                        PlayerRecord record = gson.fromJson(reader, PlayerRecord.class);
+                        if (record != null && record.getWallet() != null)
+                        {
+                            claimedWallets.put(record.getWallet(), record.getPlayerUUID());
+                        }
                     }
-
-                    System.out.println("Player loaded: " + playerRecord.getPlayerName());
-
-                    return playerRecord;
-
+                    catch (Exception ex)
+                    {
+                        plugin.getLogger().log(Level.WARNING,
+                                "Failed to read player file during wallet index load: " + file.getName(), ex);
+                    }
                 }
-
             }
-            catch (IOException ex) {
+        }.runTaskAsynchronously(plugin);
+    }
 
-                System.out.println("Loading player file failed!");
-                ex.printStackTrace();
+    private PlayerRecord getPlayerRecord(UUID playerUUID, boolean cacheRecord)
+    {
+        PlayerRecord cached = playerRecords.get(playerUUID);
 
+        if (cached != null)
+        {
+            return cached;
+        }
+
+        File file = new File(this.dataLocation, playerUUID + ".json");
+        plugin.getLogger().info("Loading player file: " + file.getName());
+
+        try
+        {
+            if (!file.exists())
+            {
+                file.createNewFile();
             }
 
+            PlayerRecord record;
+            try (Reader reader = new FileReader(file))
+            {
+                record = new GsonBuilder().create().fromJson(reader, PlayerRecord.class);
+            }
+
+            if (record != null)
+            {
+                if (cacheRecord)
+                {
+                    playerRecords.put(playerUUID, record);
+                }
+                plugin.getLogger().info("Player loaded: " + record.getPlayerName());
+
+                return record;
+            }
+        }
+        catch (IOException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Loading player file failed!", ex);
         }
 
         return null;
-
     }
 
-    @Override
-    public PlayerRecord getOfflinePlayerRecord(OfflinePlayer player) {
-
-        return getPlayerRecord(player.getUniqueId(), false);
-
+    private boolean hasPlayerRecord(UUID playerUUID)
+    {
+        return new File(this.dataLocation, playerUUID + ".json").exists();
     }
 
-    @Override
-    protected boolean insertPlayerRecord(PlayerRecord playerRecord) {
+    private void loadBanks()
+    {
+        File file = new File(dataLocation, "banks.json");
+        if (!file.exists())
+        {
+            return;
+        }
 
-        try {
+        try (Reader reader = new FileReader(file))
+        {
+            BankRecord[] records = new GsonBuilder().create().fromJson(reader, BankRecord[].class);
 
-            File file = new File(this.dataLocation, playerRecord.getPlayerUUID() + ".json");
+            if (records != null)
+            {
+                for (BankRecord record : records)
+                {
+                    bankRecords.put(record.getBankName(), record);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to load banks.json.", ex);
+        }
+    }
 
-            System.out.println("Saving player file to " + file.getAbsolutePath());
+    private void saveBanks()
+    {
+        File file = new File(dataLocation, "banks.json");
 
-            if(!file.exists()) {
-
+        try
+        {
+            if (!file.exists())
+            {
                 file.createNewFile();
-
             }
 
-            Gson gson = new GsonBuilder().create();
-
-            Writer fileWriter = new FileWriter(file, false);
-
-            gson.toJson(playerRecord, fileWriter);
-
-            fileWriter.flush();
-            fileWriter.close();
-
-            System.out.println("Player file '" + file.getName() + "' has been saved successfully.");
-
-            return true;
-
+            try (Writer writer = new FileWriter(file, false))
+            {
+                new GsonBuilder().create().toJson(bankRecords.values().toArray(), writer);
+            }
         }
-        catch (IOException ex) {
+        catch (IOException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to save banks.json.", ex);
+        }
+    }
 
-            System.out.println("Player file save has failed.");
-            ex.printStackTrace();
-
+    private void loadBankMembers()
+    {
+        File file = new File(dataLocation, "bank_members.json");
+        if (!file.exists())
+        {
+            return;
         }
 
-        return false;
-    }
+        try (Reader reader = new FileReader(file))
+        {
+            Type type = new TypeToken<Map<String, List<String>>>() {}.getType();
+            Map<String, List<String>> loaded = new GsonBuilder().create().fromJson(reader, type);
 
-    @Override
-    public boolean updatePlayerRecord(PlayerRecord playerRecord) {
-
-        // In this case we're overwriting everything in the file anyway - same method as insert, so no need to duplicate!
-        return insertPlayerRecord(playerRecord);
-
-    }
-
-    @Override
-    public boolean hasPlayerRecord(Player player) {
-
-        return hasPlayerRecord(player.getUniqueId());
-
-    }
-
-    @Override
-    public boolean hasPlayerRecord(OfflinePlayer player) {
-
-        return hasPlayerRecord(player.getUniqueId());
-
-    }
-
-    private boolean hasPlayerRecord(UUID playerUUID) {
-
-        File file = new File(this.dataLocation, playerUUID + ".json");
-
-        return file.exists();
-
-    }
-
-    public boolean isAlreadyAssignedToOtherPlayer(String walletAddress, Player currentPlayer) {
-
-        String playerUUID = currentPlayer.getUniqueId().toString();
-
-        return this.claimedWallets.containsKey(walletAddress)
-                 && !this.claimedWallets.get(walletAddress).equalsIgnoreCase(playerUUID);
-
-    }
-
-    @Override
-    public boolean saveOfflinePayment(OfflinePaymentRecord paymentRecord) {
-
-        if(paymentRecord != null) {
-
-            offlinePaymentRecords.add(paymentRecord);
-
-            return true;
-
+            if (loaded != null)
+            {
+                for (Map.Entry<String, List<String>> entry : loaded.entrySet())
+                {
+                    Set<String> memberSet = ConcurrentHashMap.newKeySet();
+                    memberSet.addAll(entry.getValue());
+                    bankMembers.put(entry.getKey(), memberSet);
+                }
+            }
         }
-
-        return false;
-
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to load bank_members.json.", ex);
+        }
     }
 
-    private boolean saveOfflinePaymentRecords() {
+    private void saveBankMembers()
+    {
+        File file = new File(dataLocation, "bank_members.json");
 
-        boolean success = true;
-
-        try {
-
-            File file = new File(this.dataLocation, "offlinepayments.json");
-
-            System.out.println("Saving offline payments file to " + file.getAbsolutePath());
-
-            if(!file.exists()) {
-
+        try
+        {
+            if (!file.exists())
+            {
                 file.createNewFile();
-
             }
 
-            Gson gson = new GsonBuilder()
-                    .registerTypeAdapter(LocalDateTime.class, new JsonSerializer<LocalDateTime>() {
-                        @Override
-                        public JsonElement serialize(LocalDateTime src, Type typeOfSrc, JsonSerializationContext context) {
-                            return new JsonPrimitive(src.toInstant(ZoneOffset.UTC).toEpochMilli());
-                        }
-                    }).create();
-
-            Writer fileWriter = new FileWriter(file, false);
-
-            gson.toJson(offlinePaymentRecords.toArray(), fileWriter);
-
-            fileWriter.flush();
-            fileWriter.close();
-
-            System.out.println("Offline Payments file has been saved successfully.");
-
-        }
-        catch (IOException ex) {
-
-            System.out.println("Offline Payments file save has failed.");
-            ex.printStackTrace();
-
-            success = false;
-
-        }
-
-        return success;
-
-    }
-
-    @Override
-    public List<OfflinePaymentRecord> getOfflinePaymentRecords(Player forPlayer) {
-
-        if(forPlayer != null
-            && offlinePaymentRecords != null
-            && offlinePaymentRecords.size() > 0) {
-
-            return offlinePaymentRecords.stream()
-                                        .filter(x -> x.getTargetPlayerUUID().equals(forPlayer.getUniqueId()))
-                                        .toList();
-
-        }
-
-        return new ArrayList<>();
-
-    }
-
-    @Override
-    public void deleteOfflinePaymentRecords(Player forPlayer) {
-
-        offlinePaymentRecords.removeIf(x -> x.getTargetPlayerUUID().equals(forPlayer.getUniqueId()));
-
-    }
-
-    private void loadOfflinePayments() {
-
-        try {
-
-            File file = new File(this.dataLocation,  "offlinepayments.json");
-
-            if(!file.exists()) {
-
-                file.createNewFile();
-
+            Map<String, List<String>> serializable = new HashMap<>();
+            for (Map.Entry<String, Set<String>> entry : bankMembers.entrySet())
+            {
+                serializable.put(entry.getKey(), new ArrayList<>(entry.getValue()));
             }
 
-            Gson gson = new GsonBuilder()
-                    .registerTypeAdapter(LocalDateTime.class, new JsonDeserializer<LocalDateTime>() {
-                        @Override
-                        public LocalDateTime deserialize(JsonElement json, Type type, JsonDeserializationContext jsonDeserializationContext) throws JsonParseException {
+            try (Writer writer = new FileWriter(file, false))
+            {
+                new GsonBuilder().create().toJson(serializable, writer);
+            }
+        }
+        catch (IOException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to save bank_members.json.", ex);
+        }
+    }
+
+    /** Persist the current in-memory offline payments list to disk. */
+    private void saveOfflinePaymentRecords()
+    {
+        File file = new File(this.dataLocation, "offlinepayments.json");
+        plugin.getLogger().info("Saving offline payments file.");
+
+        Gson gson = new GsonBuilder()
+                .registerTypeAdapter(LocalDateTime.class, (JsonSerializer<LocalDateTime>)
+                        (src, typeOfSrc, context) ->
+                                new JsonPrimitive(src.toInstant(ZoneOffset.UTC).toEpochMilli()))
+                .create();
+
+        try
+        {
+            if (!file.exists())
+            {
+                file.createNewFile();
+            }
+
+            try (Writer writer = new FileWriter(file, false))
+            {
+                gson.toJson(offlinePaymentRecords.toArray(), writer);
+            }
+
+            plugin.getLogger().info("Offline payments file saved successfully.");
+        }
+        catch (IOException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Offline payments file save failed.", ex);
+        }
+    }
+
+    private void loadOfflinePayments()
+    {
+        File file = new File(this.dataLocation, "offlinepayments.json");
+
+        Gson gson = new GsonBuilder()
+                .registerTypeAdapter(LocalDateTime.class, (JsonDeserializer<LocalDateTime>)
+                        (json, type, ctx) ->
+                        {
                             Instant instant = Instant.ofEpochMilli(json.getAsJsonPrimitive().getAsLong());
                             return LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
-                        }
-                    }).create();
+                        })
+                .create();
 
-            Reader fileReader = new FileReader(file);
+        try
+        {
+            if (!file.exists())
+            {
+                file.createNewFile();
 
-            OfflinePaymentRecord[] records = gson.fromJson(fileReader, OfflinePaymentRecord[].class);
+                return; // nothing to load from a new file
+            }
 
-            fileReader.close();
-
-            if(records != null
-                    && records.length > 0) {
-
-                for(OfflinePaymentRecord paymentRecord : records) {
-
-                    offlinePaymentRecords.add(paymentRecord);
-
+            try (Reader reader = new FileReader(file))
+            {
+                OfflinePaymentRecord[] records = gson.fromJson(reader, OfflinePaymentRecord[].class);
+                if (records != null)
+                {
+                    for (OfflinePaymentRecord record : records)
+                    {
+                        offlinePaymentRecords.add(record);
+                    }
                 }
-
             }
-
         }
-        catch (IOException ex) {
-
-            System.out.println("Loading offline payments file failed!");
-            ex.printStackTrace();
-
+        catch (IOException ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Loading offline payments file failed!", ex);
         }
-
     }
-
-    @Override
-    public double getOfflinePaymentsTotal(Player forPlayer) {
-
-        double result = 0;
-
-        if(forPlayer != null
-                && offlinePaymentRecords != null
-                && offlinePaymentRecords.size() > 0) {
-
-            for(OfflinePaymentRecord offlinePaymentRecord : offlinePaymentRecords.stream().filter(x -> x.getTargetPlayerUUID().equals(forPlayer.getUniqueId())).toList()) {
-
-                result += offlinePaymentRecord.getPaymentAmount();
-
-            }
-
-        }
-
-        return result;
-
-    }
-
 }

@@ -1,6 +1,6 @@
 name: BananoEconomy
 version: ${project.version}
-main: banano.bananominecraft.bananoeconomy.Main
+main: banano.bananominecraft.bananoeconomy.BananoEconomyMain
 api-version: 1.16
 authors: [Kirby]
 description: A Banano Tipbot for Minecraft
@@ -27,6 +27,11 @@ commands:
     description: Displays your balance
     aliases: [bal]
 
+  history:
+    description: Displays your transaction history
+    usage: /<command> [last X transactions]
+    aliases: [hist,transactions,trans]
+
   bc:
     aliases: [bananoeconomy,bananocraft,be]
     description: Generic admin command to provide plugin admin.
@@ -39,6 +44,17 @@ commands:
     aliases: [showofflinepayments, showofflinetransactions]
     description: Displays the details of the changed transactions while the player was offline.
 
+  representative:
+    aliases: [rep]
+    description: Manage your account's representative
+    usage: /<command> <set <ban_address|random>|get>
+    permission: BananoEconomy.representative
+    permission-message: You do not have /<permission>
+
+  receive:
+    aliases: [rec]
+    description: Manually receives any pending incoming transactions
+
 permissions:
   BananoEconomy.nodeinfo.ip:
     description: This permission allows users to see the node IP with the nodeinfo command
@@ -46,5 +62,8 @@ permissions:
   BananoEconomy.admin:
     description: Access to the BananoCraft economy admin commands.
     default: op
+  BananoEconomy.representative:
+    description: Access to the /representative command.
+    default: true
 
 
