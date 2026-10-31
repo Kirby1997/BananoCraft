@@ -746,6 +746,27 @@ class RPCTest
     }
 
     @Test
+    void walletCreate_refusesToSendSeedToPublicPlainHttpNode() throws Exception
+    {
+        when(configEngine.getNodeAddress()).thenReturn("http://203.0.113.5:7072"); // TEST-NET-3, public
+        assertFalse(rpc.walletCreate());
+        verify(http, never()).post(anyString(), anyString());
+        verify(configEngine, never()).setWalletId(anyString());
+    }
+
+    @Test
+    void isSeedSafeEndpoint_allowsHttpsAndPrivateHttpOnly()
+    {
+        assertTrue(RPC.isSeedSafeEndpoint("https://node.example.org/"));
+        assertTrue(RPC.isSeedSafeEndpoint("http://127.0.0.1:7072"));
+        assertTrue(RPC.isSeedSafeEndpoint("http://192.168.1.20:7072"));
+        assertTrue(RPC.isSeedSafeEndpoint("http://10.0.0.5:7072/"));
+        assertFalse(RPC.isSeedSafeEndpoint("http://203.0.113.5:7072"));
+        assertFalse(RPC.isSeedSafeEndpoint("ftp://127.0.0.1/"));
+        assertFalse(RPC.isSeedSafeEndpoint("not a url"));
+    }
+
+    @Test
     void walletCreate_doesNothing_onFailure() throws Exception
     {
         stubFailure();

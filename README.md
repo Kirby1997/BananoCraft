@@ -82,7 +82,10 @@ CREATE TABLE IF NOT EXISTS bank_members (
 
 
 ## Master wallet setup:  
-* Set up a Banano Node or use the public API (https://nanoo.tools/bananode-api)
+* Set up **your own** Banano Node with `enable_control = true`. Do **not** point the plugin at a
+  public or third-party RPC API: if the configured wallet is missing, the plugin sends the wallet
+  seed to the node (`wallet_create`), and that seed controls every player's funds. The seed is only
+  ever sent to an `https://` node, or to an `http://` node on loopback or a private network.
 * Get a Banano wallet seed from vault.banano.cc or Kalium
 
 
@@ -219,7 +222,8 @@ Shows the player's currently set representative.
 Enables setting the node address without restarting the server.
 
 * The new node address must follow the format `http://[url/ip address]:[port]/`
-* Required permission: OP or `BananoEconomy.admin`
+* **Server console only.** If the master wallet is missing on the new node, the wallet seed is sent
+  to it, so this cannot be run by in-game players, even ops.
 
 `/bc account [account|block] [set|view] [set:address]`
 

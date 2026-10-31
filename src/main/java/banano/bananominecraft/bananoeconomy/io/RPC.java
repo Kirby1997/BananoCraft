@@ -14,6 +14,9 @@ import org.bukkit.plugin.Plugin;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.RoundingMode;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.URI;
 import java.net.URL;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -791,6 +794,15 @@ public class RPC
      */
     private String createWalletFromSeed(String seed, String label)
     {
+        // The seed gives custody of every account in the wallet, so never send it in cleartext
+        // across a public network.
+        if (!isSeedSafeEndpoint(configEngine.getNodeAddress()))
+        {
+            plugin.getLogger().severe(label + " refused: the wallet seed is only sent to an https:// node, or to an"
+                    + " http:// node on loopback or a private network. Use your own node, never a public RPC API.");
+            return null;
+        }
+
         final JsonObject json_payload = new JsonObject();
         json_payload.addProperty("action", "wallet_create");
         json_payload.addProperty("seed",   seed);
@@ -820,6 +832,42 @@ public class RPC
             plugin.getLogger().log(Level.SEVERE, label + " failed.", e);
         }
         return null;
+    }
+
+    /** https anywhere, or plain http only when every address of the host is loopback/link-local/private. */
+    static boolean isSeedSafeEndpoint(String nodeAddress)
+    {
+        try
+        {
+            URI uri = new URI(nodeAddress);
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
+
+            if (scheme.equals("https"))
+            {
+                return true;
+            }
+            if (!scheme.equals("http") || uri.getHost() == null)
+            {
+                return false;
+            }
+
+            for (InetAddress address : InetAddress.getAllByName(uri.getHost()))
+            {
+                boolean uniqueLocalV6 = address instanceof Inet6Address
+                        && (address.getAddress()[0] & 0xfe) == 0xfc;   // fc00::/7
+
+                if (!(address.isLoopbackAddress() || address.isLinkLocalAddress()
+                        || address.isSiteLocalAddress() || uniqueLocalV6))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
     }
 
     // -------------------------------------------------------------------------
