@@ -11,6 +11,10 @@ import org.mockbukkit.mockbukkit.ServerMock;
 import org.mockbukkit.mockbukkit.entity.PlayerMock;
 import org.mockbukkit.mockbukkit.plugin.PluginMock;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -380,5 +384,162 @@ class JsonDBConnectorTest
         assertTrue(reopened.isBankMember(BANK_NAME, OWNER_UUID));
         assertTrue(reopened.isBankMember(BANK_NAME, OTHER_UUID));
         reopened.close();
+    }
+
+    // -------------------------------------------------------------------------
+    // Missing / empty / corrupt player files
+    // -------------------------------------------------------------------------
+
+    private File dataDir()
+    {
+        return new File(plugin.getDataFolder(), "data");
+    }
+
+    private File playerFile(PlayerMock p)
+    {
+        return new File(dataDir(), p.getUniqueId() + ".json");
+    }
+
+    @Test
+    void getPlayerRecord_missingFile_returnsNullWithoutCreatingFile()
+    {
+        assertNull(db.getPlayerRecord(player));
+        assertNull(db.getOfflinePlayerRecord(player));
+
+        assertFalse(playerFile(player).exists(), "Loading a missing record must not create an empty file");
+        assertFalse(db.hasPlayerRecord(player));
+    }
+
+    @Test
+    void emptyPlayerFile_isTreatedAsNoRecord() throws IOException
+    {
+        assertTrue(playerFile(player).createNewFile());
+
+        assertFalse(db.hasPlayerRecord(player));
+        assertNull(db.getPlayerRecord(player));
+
+        // ...so a record can still be created over it.
+        PlayerRecord created = db.createPlayerRecord(player, "ban_after_empty");
+        assertNotNull(created);
+        assertEquals("ban_after_empty", created.getWallet());
+    }
+
+    @Test
+    void corruptPlayerFile_isTreatedAsNoRecord() throws IOException
+    {
+        Files.writeString(playerFile(player).toPath(), "{ not valid json", StandardCharsets.UTF_8);
+
+        assertFalse(db.hasPlayerRecord(player));
+        assertNull(db.getPlayerRecord(player));
+    }
+
+    // -------------------------------------------------------------------------
+    // Atomic writes
+    // -------------------------------------------------------------------------
+
+    @Test
+    void writes_leaveNoTempFilesBehind()
+    {
+        db.createPlayerRecord(player, "ban_wallet");
+        db.createBankRecord(makeBank());
+        db.addBankMember(BANK_NAME, OWNER_UUID);
+        db.saveOfflinePayment(new OfflinePaymentRecord(
+                player.getUniqueId(), "Bob", 1.0, "HASH", LocalDateTime.now(), ""));
+
+        String[] leftovers = dataDir().list((dir, name) -> name.endsWith(".tmp"));
+
+        assertNotNull(leftovers);
+        assertEquals(0, leftovers.length);
+        assertTrue(playerFile(player).length() > 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // Offline payments are persisted immediately
+    // -------------------------------------------------------------------------
+
+    @Test
+    void offlinePayment_persistedImmediately_withoutClose()
+    {
+        db.saveOfflinePayment(new OfflinePaymentRecord(
+                player.getUniqueId(), "Bob", 3.0, "HASH", LocalDateTime.now(), "hi"));
+
+        // No close()/flush: simulates a crash straight after the tip.
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals(3.0, reopened.getOfflinePaymentsTotal(player));
+        reopened.close();
+    }
+
+    @Test
+    void offlinePaymentDeletion_persistedImmediately_withoutClose()
+    {
+        db.saveOfflinePayment(new OfflinePaymentRecord(
+                player.getUniqueId(), "Bob", 3.0, "HASH", LocalDateTime.now(), ""));
+        db.deleteOfflinePaymentRecords(player);
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals(0.0, reopened.getOfflinePaymentsTotal(player));
+        reopened.close();
+    }
+
+    // -------------------------------------------------------------------------
+    // Claimed wallet index
+    // -------------------------------------------------------------------------
+
+    @Test
+    void claimedWallets_updatedOnInsert()
+    {
+        PlayerMock other = server.addPlayer("Bob");
+        db.createPlayerRecord(player, "ban_alice");
+
+        assertTrue(db.isAlreadyAssignedToOtherPlayer("ban_alice", other));
+        assertFalse(db.isAlreadyAssignedToOtherPlayer("ban_alice", player));
+    }
+
+    @Test
+    void claimedWallets_loadedSynchronouslyOnStartup_ignoringNonPlayerFiles()
+    {
+        PlayerMock other = server.addPlayer("Bob");
+        db.createPlayerRecord(player, "ban_alice");
+        db.createBankRecord(makeBank()); // banks.json must not be parsed as a player file
+
+        // Index must be complete as soon as the constructor returns — no scheduler tick.
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertTrue(reopened.isAlreadyAssignedToOtherPlayer("ban_alice", other));
+        reopened.close();
+    }
+
+    // -------------------------------------------------------------------------
+    // updatePlayerWallet
+    // -------------------------------------------------------------------------
+
+    @Test
+    void updatePlayerWallet_updatesCacheDiskAndIndex()
+    {
+        PlayerMock other = server.addPlayer("Bob");
+        PlayerRecord record = db.createPlayerRecord(player, "ban_old");
+
+        assertTrue(db.updatePlayerWallet(player, "ban_new"));
+
+        // Cached instance is updated in place.
+        assertEquals("ban_new", record.getWallet());
+        assertEquals("ban_new", db.getPlayerRecord(player).getWallet());
+
+        // Wallet index follows the change.
+        assertTrue(db.isAlreadyAssignedToOtherPlayer("ban_new", other));
+        assertFalse(db.isAlreadyAssignedToOtherPlayer("ban_old", other));
+
+        // Persisted to disk.
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals("ban_new", reopened.getPlayerRecord(player).getWallet());
+        assertTrue(reopened.isAlreadyAssignedToOtherPlayer("ban_new", other));
+        assertFalse(reopened.isAlreadyAssignedToOtherPlayer("ban_old", other));
+        reopened.close();
+    }
+
+    @Test
+    void updatePlayerWallet_returnsFalse_whenNoRecord()
+    {
+        assertFalse(db.updatePlayerWallet(player, "ban_new"));
+        assertFalse(playerFile(player).exists());
     }
 }

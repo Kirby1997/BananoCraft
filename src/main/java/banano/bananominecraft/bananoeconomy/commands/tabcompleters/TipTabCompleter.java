@@ -65,4 +65,4 @@ public class TipTabCompleter implements TabCompleter
 
         return StringUtil.copyPartialMatches(args[args.length - 1], results, new ArrayList<>());
     }
-}
+}
