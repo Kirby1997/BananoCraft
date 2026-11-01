@@ -181,6 +181,26 @@ public class LightWalletSigner implements WalletSigner
         }
     }
 
+    @Override
+    public void precomputeWork(String walletId, String account)
+    {
+        try
+        {
+            final Wallet kind = kindFor(walletId);
+            final LightWallet wallet = walletFor(kind);
+            if (wallet == null)
+            {
+                return;
+            }
+            wallet.precomputeWork(resolveIndex(kind, wallet, account));
+        }
+        catch (TransactionError | RuntimeException e)
+        {
+            // Best effort only: an unmatched legacy account simply gets no precomputed work.
+            log.log(Level.FINE, "Work precompute skipped for " + account + ": " + e.getMessage());
+        }
+    }
+
     private LightWallet requireWallet(Wallet kind) throws TransactionError
     {
         LightWallet wallet = walletFor(kind);

@@ -2,7 +2,9 @@ package banano.bananominecraft.bananoeconomy.services;
 
 import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 
 import java.time.LocalDateTime;
@@ -22,6 +24,10 @@ import java.util.logging.Logger;
 public final class TipService
 {
     private static final Logger LOGGER = Logger.getLogger(TipService.class.getName());
+
+    /** Prefix of the offline-payment note when the sender's transaction outcome is unknown. */
+    static final String UNKNOWN_RECIPIENT_NOTE =
+            "[" + TransferOutcome.UNKNOWN_NOTE + " - this payment may not have arrived, check /history]";
 
     private final IDBConnector db;
     private final RPC rpc;
@@ -55,6 +61,23 @@ public final class TipService
         {
             blockHash = rpc.sendTransaction(senderWallet, recipientWallet, amount);
         }
+        catch (final UnknownOutcomeError error)
+        {
+            // The tip may or may not have been sent. The sender is told the status is unknown (not a
+            // plain failure), and an offline recipient still gets a record so they are informed too.
+            LOGGER.log(Level.SEVERE, "UNKNOWN OUTCOME for tip from {0} to {1} (wallet {2}), amount {3} BAN: {4}",
+                    new Object[]{ fromDisplayName, recipientUuid, recipientWallet, amount,
+                            TransferOutcome.UNKNOWN_NOTE });
+
+            if (!recipientOnline)
+            {
+                db.saveOfflinePayment(new OfflinePaymentRecord(
+                        recipientUuid, fromDisplayName, amount, "", LocalDateTime.now(),
+                        UNKNOWN_RECIPIENT_NOTE + (message == null || message.isEmpty() ? "" : " " + message)));
+            }
+
+            return TransferResult.failed(error.getUserError());
+        }
         catch (final TransactionError error)
         {
             return TransferResult.failed(error.getUserError());
@@ -62,7 +85,8 @@ public final class TipService
 
         // Best-effort: the tip has already been sent regardless of whether this succeeds.
         // If it fails, the block is left pending and will still be picked up later by the
-        // node's own auto-receive, the confirmation websocket, or a manual /receive.
+        // node's own auto-receive (node mode), receive-on-join or the confirmation websocket
+        // (light mode), or a manual /receive.
         try
         {
             rpc.receiveBlock(recipientWallet, blockHash);

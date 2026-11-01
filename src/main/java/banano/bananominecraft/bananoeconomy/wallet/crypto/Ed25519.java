@@ -2,6 +2,7 @@ package banano.bananominecraft.bananoeconomy.wallet.crypto;
 
 import java.math.BigInteger;
 import java.security.MessageDigest;
+import java.util.Arrays;
 
 /**
  * Ed25519 (RFC 8032, pure EdDSA) with a pluggable 512-bit hash. {@link #BLAKE2B} is the
@@ -91,12 +92,21 @@ final class Ed25519
     byte[] publicKey(byte[] privateKey)
     {
         checkLength(privateKey, 32, "private key");
-        byte[] a = expandedScalar(hash.hash(privateKey));
-        long[][] p = point();
-        scalarBase(p, a);
-        byte[] pk = new byte[32];
-        pack(pk, p);
-        return pk;
+        byte[] h = hash.hash(privateKey);
+        byte[] a = expandedScalar(h);
+        try
+        {
+            long[][] p = point();
+            scalarBase(p, a);
+            byte[] pk = new byte[32];
+            pack(pk, p);
+            return pk;
+        }
+        finally
+        {
+            wipe(h);
+            wipe(a);
+        }
     }
 
     /** Sign {@code message} (RFC 8032 5.1.6). Returns R || S, 64 bytes. */
@@ -106,40 +116,64 @@ final class Ed25519
         byte[] h = hash.hash(privateKey);
         byte[] a = expandedScalar(h);
         byte[] prefix = new byte[32];
-        System.arraycopy(h, 32, prefix, 0, 32);
-
-        long[][] p = point();
-        scalarBase(p, a);
-        byte[] publicKey = new byte[32];
-        pack(publicKey, p);
-
-        // r = H(prefix || M) mod L; R = rB
-        byte[] r = reduce(hash.hash(prefix, message));
-        long[][] rp = point();
-        scalarBase(rp, r);
-        byte[] sig = new byte[64];
-        pack(sig, rp);
-
-        // k = H(R || A || M) mod L; S = (r + k * a) mod L
-        byte[] rEnc = new byte[32];
-        System.arraycopy(sig, 0, rEnc, 0, 32);
-        byte[] k = reduce(hash.hash(rEnc, publicKey, message));
+        byte[] rHash = null;
+        byte[] r = null;
         long[] x = new long[64];
-        for (int i = 0; i < 32; i++)
+        try
         {
-            x[i] = r[i] & 0xff;
-        }
-        for (int i = 0; i < 32; i++)
-        {
-            for (int j = 0; j < 32; j++)
+            System.arraycopy(h, 32, prefix, 0, 32);
+
+            long[][] p = point();
+            scalarBase(p, a);
+            byte[] publicKey = new byte[32];
+            pack(publicKey, p);
+
+            // r = H(prefix || M) mod L; R = rB
+            rHash = hash.hash(prefix, message);
+            r = reduce(rHash);
+            long[][] rp = point();
+            scalarBase(rp, r);
+            byte[] sig = new byte[64];
+            pack(sig, rp);
+
+            // k = H(R || A || M) mod L; S = (r + k * a) mod L
+            byte[] rEnc = new byte[32];
+            System.arraycopy(sig, 0, rEnc, 0, 32);
+            byte[] k = reduce(hash.hash(rEnc, publicKey, message));
+            for (int i = 0; i < 32; i++)
             {
-                x[i + j] += (k[i] & 0xff) * (long) (a[j] & 0xff);
+                x[i] = r[i] & 0xff;
             }
+            for (int i = 0; i < 32; i++)
+            {
+                for (int j = 0; j < 32; j++)
+                {
+                    x[i + j] += (k[i] & 0xff) * (long) (a[j] & 0xff);
+                }
+            }
+            byte[] s = new byte[32];
+            modL(s, x);
+            System.arraycopy(s, 0, sig, 32, 32);
+            return sig;
         }
-        byte[] s = new byte[32];
-        modL(s, x);
-        System.arraycopy(s, 0, sig, 32, 32);
-        return sig;
+        finally
+        {
+            // Best effort: secret scalars, the nonce and their intermediates do not outlive the call.
+            wipe(h);
+            wipe(a);
+            wipe(prefix);
+            wipe(rHash);
+            wipe(r);
+            Arrays.fill(x, 0L);
+        }
+    }
+
+    private static void wipe(byte[] b)
+    {
+        if (b != null)
+        {
+            Arrays.fill(b, (byte) 0);
+        }
     }
 
     /** Verify a signature (RFC 8032 5.1.7, cofactorless). Never throws for malformed input. */
@@ -221,6 +255,7 @@ final class Ed25519
         }
         byte[] r = new byte[32];
         modL(r, x);
+        Arrays.fill(x, 0L);
         return r;
     }
 
@@ -347,6 +382,10 @@ final class Ed25519
         set25519(q[2], GF1);
         mul(q[3], BASE_X, BASE_Y);
         scalarMult(p, q, s);
+        for (long[] coordinate : q)
+        {
+            Arrays.fill(coordinate, 0L); // ladder state depends on the (possibly secret) scalar
+        }
     }
 
     /** Decode a point and negate it; false if it is not on the curve. Public data only. */

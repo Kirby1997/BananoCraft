@@ -30,13 +30,21 @@ public interface IDBConnector
     /**
      * As {@link #updatePlayerWallet(Player, String)}, also storing the seed-derivation index of the
      * new wallet. A {@code null} index leaves the record's index unchanged.
+     *
+     * @throws DuplicateWalletException if another record already owns that address or index (UNIQUE
+     *                                  constraint, MySQL/MongoDB); nothing was written
      */
     boolean updatePlayerWallet(Player player, String wallet, Integer walletIndex);
 
     /** Creates a record for a legacy-style wallet whose derivation index is not known ({@code null}). */
     PlayerRecord createPlayerRecord(Player player, String walletAddress);
 
-    /** Creates a record storing the seed-derivation index of {@code walletAddress}. */
+    /**
+     * Creates a record storing the seed-derivation index of {@code walletAddress}.
+     *
+     * @throws DuplicateWalletException if another record already owns that address or index (UNIQUE
+     *                                  constraint, MySQL/MongoDB); nothing was written
+     */
     PlayerRecord createPlayerRecord(Player player, String walletAddress, Integer walletIndex);
     /** @throws IllegalStateException if the database cannot answer (never guesses "not assigned"). */
     boolean isAlreadyAssignedToOtherPlayer(String walletAddress, Player currentPlayer);
@@ -102,6 +110,10 @@ public interface IDBConnector
     // -------------------------------------------------------------------------
 
     BankRecord getBankRecord(String bankName);
+    /**
+     * @throws DuplicateWalletException if another bank already owns that address or index (UNIQUE
+     *                                  constraint, MySQL/MongoDB); nothing was written
+     */
     boolean createBankRecord(BankRecord bank);
     boolean bankNameExists(String bankName);
     boolean deleteBankRecord(String bankName);

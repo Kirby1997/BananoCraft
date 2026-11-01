@@ -157,4 +157,21 @@ class NanoKeysTest
         assertThrows(IllegalArgumentException.class, () -> NanoKeys.sign(new byte[32], null));
         assertFalse(NanoKeys.verify(new byte[32], new byte[0], null));
     }
+
+    @Test
+    void signAndPublicKey_doNotModifyTheKey_andStayDeterministic()
+    {
+        // Ed25519 wipes its internal secrets after use; the caller's key and the results must be unaffected.
+        byte[] sk = NanoKeys.privateKey(new byte[32], 3);
+        byte[] copy = sk.clone();
+        byte[] message = new byte[32];
+        message[5] = 9;
+        byte[] pk = NanoKeys.publicKey(sk);
+        byte[] sig1 = NanoKeys.sign(sk, message);
+        byte[] sig2 = NanoKeys.sign(sk, message);
+        assertArrayEquals(copy, sk);
+        assertArrayEquals(pk, NanoKeys.publicKey(sk));
+        assertArrayEquals(sig1, sig2);
+        assertTrue(NanoKeys.verify(pk, message, sig1));
+    }
 }

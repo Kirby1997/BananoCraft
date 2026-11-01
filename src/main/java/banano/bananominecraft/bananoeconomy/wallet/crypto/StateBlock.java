@@ -72,6 +72,79 @@ public final class StateBlock
                 balanceBytes(balanceRaw), link);
     }
 
+    /**
+     * Rebuild a state block from the JSON form used by {@code process} and returned as {@code contents} by
+     * {@code block_info} with {@code json_block: true} ({@code account}, {@code previous}, {@code representative},
+     * decimal {@code balance}, {@code link}, {@code signature}, optional hex {@code work}). The hash is recomputed
+     * from the fields; nothing is trusted from the source beyond the fields themselves, so callers must still compare
+     * {@link #hash()} with the expected hash and check {@link #hasValidSignature()}.
+     *
+     * @param json the block object
+     * @return the block, carrying the signature (and work, if present)
+     * @throws IllegalArgumentException if the object is not a well-formed state block
+     */
+    public static StateBlock fromRpcJson(JsonObject json)
+    {
+        if (json == null)
+        {
+            throw new IllegalArgumentException("Block JSON is null");
+        }
+        if (!"state".equals(field(json, "type", false)))
+        {
+            throw new IllegalArgumentException("Not a state block: type " + field(json, "type", false));
+        }
+        String balanceText = field(json, "balance", true);
+        for (int i = 0; i < balanceText.length(); i++)
+        {
+            if (balanceText.charAt(i) < '0' || balanceText.charAt(i) > '9')
+            {
+                throw new IllegalArgumentException("Balance is not a decimal raw amount: " + balanceText);
+            }
+        }
+        if (balanceText.isEmpty() || balanceText.length() > 39)
+        {
+            throw new IllegalArgumentException("Balance is not a decimal raw amount: " + balanceText);
+        }
+        byte[] signature = hexField(json, "signature", 64);
+        String workText = field(json, "work", false);
+        Long work = null;
+        if (workText != null)
+        {
+            if (workText.length() != 16)
+            {
+                throw new IllegalArgumentException("Work must be 16 hex digits: " + workText);
+            }
+            work = Long.parseUnsignedLong(workText, 16);
+        }
+        return new StateBlock(field(json, "account", true), hexField(json, "previous", 32),
+                field(json, "representative", true), new BigInteger(balanceText), hexField(json, "link", 32),
+                signature, work);
+    }
+
+    private static String field(JsonObject json, String name, boolean required)
+    {
+        com.google.gson.JsonElement e = json.get(name);
+        if (e == null || e.isJsonNull() || !e.isJsonPrimitive())
+        {
+            if (required)
+            {
+                throw new IllegalArgumentException("Missing field " + name);
+            }
+            return null;
+        }
+        return e.getAsString();
+    }
+
+    private static byte[] hexField(JsonObject json, String name, int length)
+    {
+        String text = field(json, name, true);
+        if (text.length() != length * 2)
+        {
+            throw new IllegalArgumentException("Field " + name + " must be " + length + " bytes of hex");
+        }
+        return Hex.decode(text);
+    }
+
     /** @return the 32-byte block hash */
     public byte[] hash()
     {

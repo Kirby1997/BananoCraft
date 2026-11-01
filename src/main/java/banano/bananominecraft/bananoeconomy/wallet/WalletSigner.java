@@ -85,4 +85,13 @@ public interface WalletSigner
 
     /** Changes the representative of {@code account}; returns the change block hash. */
     String setRepresentative(String walletId, String account, String representative) throws TransactionError;
+
+    /**
+     * Best-effort hint to start generating the proof-of-work for {@code account}'s next block in the
+     * background, so a later send usually finds work ready. Returns immediately. Node mode: no-op (the
+     * node generates work itself).
+     */
+    default void precomputeWork(String walletId, String account)
+    {
+    }
 }

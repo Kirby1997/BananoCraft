@@ -10,6 +10,9 @@ import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Accumulators;
+import com.mongodb.client.model.Aggregates;
+import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.Sorts;
 import com.mongodb.MongoWriteException;
@@ -41,6 +44,13 @@ public class MongoDBConnector extends BaseDBConnector
 
     /** Seed-derivation index field on user and bank documents; absent for legacy documents. */
     private static final String FIELD_WALLET_INDEX       = "walletIndex";
+
+    /** Unique indexes: no two records may own the same wallet address / derivation index (multi-server safety). */
+    static final String INDEX_USERS_WALLET       = "uq_users_wallet";
+    static final String INDEX_USERS_WALLET_INDEX = "uq_users_walletIndex";
+    static final String INDEX_BANKS_ADDRESS      = "uq_banks_address";
+    static final String INDEX_BANKS_WALLET_INDEX = "uq_banks_walletIndex";
+    private static final int MAX_LISTED_DUPLICATES = 20;
 
     /** Fail fast instead of the driver's 30s default when the server is unreachable. */
     private static final int CONNECT_TIMEOUT_SECONDS = 5;
@@ -82,6 +92,7 @@ public class MongoDBConnector extends BaseDBConnector
         this.mongoClient = connect(getMongoURI());
         this.db          = mongoClient.getDatabase(DATABASE_NAME);
         createUserCollectionIndex();
+        createUniqueWalletIndexes();
     }
 
     private String getMongoURI()
@@ -215,6 +226,10 @@ public class MongoDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
+            if (isDuplicateWalletViolation(ex))
+            {
+                throw new DuplicateWalletException("Wallet address or index already taken: " + ex.getMessage(), ex);
+            }
             plugin.getLogger().log(Level.SEVERE, "Failed to insert player record.", ex);
         }
         return false;
@@ -247,6 +262,10 @@ public class MongoDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
+            if (isDuplicateWalletViolation(ex))
+            {
+                throw new DuplicateWalletException("Wallet address or index already taken: " + ex.getMessage(), ex);
+            }
             plugin.getLogger().log(Level.SEVERE, "Failed to update player record.", ex);
         }
 
@@ -478,6 +497,11 @@ public class MongoDBConnector extends BaseDBConnector
         }
         catch (MongoWriteException ex)
         {
+            if (isDuplicateWalletViolation(ex))
+            {
+                throw new DuplicateWalletException("Bank address or index already taken: " + ex.getMessage(), ex);
+            }
+
             if (ex.getCode() == 11000)
             {
                 // Duplicate _id — bank already exists (race between bankNameExists and insert).
@@ -871,6 +895,94 @@ public class MongoDBConnector extends BaseDBConnector
         {
             plugin.getLogger().log(Level.WARNING, "Failed to create users index.", ex);
         }
+    }
+
+    /**
+     * Creates the unique indexes on wallet address and (where present) walletIndex. Idempotent. If one
+     * cannot be created because existing documents already share a value, the duplicates are listed at
+     * SEVERE and startup continues without that constraint (nothing is changed).
+     */
+    private void createUniqueWalletIndexes()
+    {
+        createUniqueIndex(COLLECTION_USERS, "wallet", INDEX_USERS_WALLET);
+        createUniqueIndex(COLLECTION_USERS, FIELD_WALLET_INDEX, INDEX_USERS_WALLET_INDEX);
+        createUniqueIndex(COLLECTION_BANKS, "address", INDEX_BANKS_ADDRESS);
+        createUniqueIndex(COLLECTION_BANKS, FIELD_WALLET_INDEX, INDEX_BANKS_WALLET_INDEX);
+    }
+
+    private void createUniqueIndex(String collection, String field, String indexName)
+    {
+        try
+        {
+            // Partial: documents without the field (legacy walletIndex) are not indexed, so many may lack it.
+            db.getCollection(collection).createIndex(Indexes.ascending(field),
+                    new IndexOptions().name(indexName).unique(true)
+                            .partialFilterExpression(exists(field, true)));
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Could not create the unique index '" + indexName + "' on "
+                    + collection + "." + field + " - the multi-server duplicate protection is NOT active for it."
+                    + " Existing duplicates: " + describeDuplicates(collection, field), ex);
+        }
+    }
+
+    /** Values of {@code field} shared by more than one document, for the SEVERE log; never throws. */
+    private String describeDuplicates(String collection, String field)
+    {
+        try
+        {
+            StringBuilder out = new StringBuilder();
+            int count = 0;
+
+            for (Document group : db.getCollection(collection).aggregate(List.of(
+                    Aggregates.match(exists(field, true)),
+                    Aggregates.group("$" + field, Accumulators.sum("n", 1)),
+                    Aggregates.match(gt("n", 1)))))
+            {
+                if (count++ < MAX_LISTED_DUPLICATES)
+                {
+                    out.append(out.length() > 0 ? "; " : "").append(group.get("_id"))
+                            .append(" x").append(group.get("n"));
+                }
+            }
+
+            if (count > MAX_LISTED_DUPLICATES)
+            {
+                out.append("; ... and ").append(count - MAX_LISTED_DUPLICATES).append(" more");
+            }
+            return count == 0 ? "(none found - see the error)" : out.toString();
+        }
+        catch (Exception e)
+        {
+            return "(could not list: " + e.getMessage() + ")";
+        }
+    }
+
+    /**
+     * True if {@code ex} is a duplicate-key write error (E11000) on one of the wallet address / index
+     * indexes (as opposed to e.g. a duplicate {@code _id}).
+     */
+    static boolean isDuplicateWalletViolation(Throwable ex)
+    {
+        for (Throwable t = ex; t != null; t = t.getCause())
+        {
+            if (t instanceof MongoWriteException write && write.getCode() == 11000)
+            {
+                String message = write.getMessage();
+                if (message != null
+                        && (message.contains(INDEX_USERS_WALLET) || message.contains(INDEX_USERS_WALLET_INDEX)
+                        || message.contains(INDEX_BANKS_ADDRESS) || message.contains(INDEX_BANKS_WALLET_INDEX)))
+                {
+                    return true;
+                }
+            }
+            if (t.getCause() == t)
+            {
+                break;
+            }
+        }
+        return false;
     }
 
     private List<PlayerRecord> queryPlayersByFrozen(boolean frozen)

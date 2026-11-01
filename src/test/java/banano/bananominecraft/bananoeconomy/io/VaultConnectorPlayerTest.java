@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy.io;
 
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.services.BankService;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.OfflinePlayer;
@@ -35,7 +36,7 @@ class VaultConnectorPlayerTest
             assertEquals(FAILURE, connector.withdrawPlayer(player, amount).type);
         }
 
-        verify(economyFuncs, never()).removeBalanceFP(any(OfflinePlayer.class), anyDouble());
+        verify(economyFuncs, never()).removeBalanceFPOutcome(any(OfflinePlayer.class), anyDouble());
     }
 
     @Test
@@ -46,7 +47,7 @@ class VaultConnectorPlayerTest
             assertEquals(FAILURE, connector.depositPlayer(player, amount).type);
         }
 
-        verify(economyFuncs, never()).addBalanceTP(any(OfflinePlayer.class), anyDouble());
+        verify(economyFuncs, never()).addBalanceTPOutcome(any(OfflinePlayer.class), anyDouble());
     }
 
     @Test
@@ -57,7 +58,7 @@ class VaultConnectorPlayerTest
         EconomyResponse r = connector.withdrawPlayer(player, 5.0);
         assertEquals(FAILURE, r.type);
         assertTrue(r.errorMessage.contains("frozen"), r.errorMessage);
-        verify(economyFuncs, never()).removeBalanceFP(any(OfflinePlayer.class), anyDouble());
+        verify(economyFuncs, never()).removeBalanceFPOutcome(any(OfflinePlayer.class), anyDouble());
     }
 
     @Test
@@ -68,14 +69,14 @@ class VaultConnectorPlayerTest
         EconomyResponse r = connector.withdrawPlayer(player, 5.0);
         assertEquals(FAILURE, r.type);
         assertEquals("Insufficient funds.", r.errorMessage);
-        verify(economyFuncs, never()).removeBalanceFP(any(OfflinePlayer.class), anyDouble());
+        verify(economyFuncs, never()).removeBalanceFPOutcome(any(OfflinePlayer.class), anyDouble());
     }
 
     @Test
     void WithdrawSuccessComputesNewBalanceWithoutRefetch()
     {
         when(economyFuncs.getBalance(player)).thenReturn(10.0);
-        when(economyFuncs.removeBalanceFP(player, 4.0)).thenReturn(true);
+        when(economyFuncs.removeBalanceFPOutcome(player, 4.0)).thenReturn(TransferOutcome.OK);
 
         EconomyResponse r = connector.withdrawPlayer(player, 4.0);
         assertEquals(SUCCESS, r.type);

@@ -48,8 +48,15 @@ import java.util.logging.Logger;
  *   <li>If {@code process} fails without a definitive answer, the account is re-read: our hash as frontier means
  *       success; an unchanged frontier means the SAME signed block (same hash, idempotent) is sent once more;
  *       anything else is {@link LightWalletException.Kind#UNKNOWN_OUTCOME}. A block with an unknown outcome is
- *       remembered (in memory) and republished before any other block is built on that account, so a second,
- *       different block is never built on its previous.</li>
+ *       remembered (in memory and in the {@link PendingBlockStore}, so it survives a restart) and republished or
+ *       resolved before any other block is built on that account, so a second, different block is never built on
+ *       its previous.</li>
+ *   <li>The node is not trusted for the values that go into a signed block. Before building on an opened account
+ *       the frontier block is fetched with {@code block_info} and rebuilt locally: its hash must equal the reported
+ *       frontier, its account must be ours and its signature must verify with our public key. Balance and
+ *       representative are taken only from that verified block; any mismatch is
+ *       {@link LightWalletException.Kind#UNAVAILABLE} and nothing is signed. Source blocks of receives are
+ *       likewise checked to be validly signed state sends to this account.</li>
  *   <li>A rejected or unknown outcome is never reported as success.</li>
  *   <li>Methods block the calling thread for network round trips and, when no precomputed work is available, for
  *       proof-of-work generation. Call them from async threads only (never the server main thread). No Bukkit
@@ -74,6 +81,7 @@ public final class LightWallet
     private final WorkGenerator work;
     private final long workThreshold;
     private final Logger log;
+    private final PendingBlockStore store;
 
     private final Map<Integer, ReentrantLock> locks = new ConcurrentHashMap<>();
     private final Map<Integer, Precomputed> precomputed = new ConcurrentHashMap<>();
@@ -99,6 +107,23 @@ public final class LightWallet
     public LightWallet(byte[] seed32, String prefix, String defaultRepresentative, LightRpc rpc, WorkGenerator work,
                        long workThreshold, Logger log)
     {
+        this(seed32, prefix, defaultRepresentative, rpc, work, workThreshold, log, PendingBlockStore.inMemory());
+    }
+
+    /**
+     * Like {@link #LightWallet(byte[], String, String, LightRpc, WorkGenerator, long, Logger)}, with a durable store
+     * for blocks whose outcome is unknown. Every record in {@code store} is loaded now and treated as unresolved: it
+     * is republished or resolved against the ledger before any new block is built on that account. A record that
+     * cannot be parsed, or is not a validly signed block of the account at its index, blocks that account
+     * ({@code UNAVAILABLE}) until it is removed from the store by an operator.
+     *
+     * @param store durable store of unresolved blocks
+     * @throws IllegalArgumentException as for the other constructor
+     * @throws IllegalStateException    if {@code store.loadAll()} fails
+     */
+    public LightWallet(byte[] seed32, String prefix, String defaultRepresentative, LightRpc rpc, WorkGenerator work,
+                       long workThreshold, Logger log, PendingBlockStore store)
+    {
         if (seed32 == null || seed32.length != 32)
         {
             throw new IllegalArgumentException("Seed must be 32 bytes");
@@ -114,6 +139,8 @@ public final class LightWallet
         this.work = Objects.requireNonNull(work, "work");
         this.workThreshold = workThreshold;
         this.log = log != null ? log : Logger.getLogger(LightWallet.class.getName());
+        this.store = Objects.requireNonNull(store, "store");
+        loadUnresolved();
 
         ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 30L, TimeUnit.SECONDS,
                 new LinkedBlockingQueue<>(), runnable ->
@@ -146,7 +173,9 @@ public final class LightWallet
     }
 
     /**
-     * Read the account's current chain head from the node (no locking, no caching).
+     * Read the account's current chain head from the node (no locking, no caching). The values are as reported by
+     * the node and are NOT verified; use them for display only. Block-producing operations re-read and verify the
+     * frontier block themselves.
      *
      * @param index account index
      * @return the account state; unopened accounts are reported with {@code opened() == false}
@@ -255,7 +284,13 @@ public final class LightWallet
                         head = prepareHead(index);
                     }
                     byte[] source = Hex.decode(entry.getKey());
-                    BigInteger amount = entry.getValue() != null ? entry.getValue() : sendAmountFor(index, source);
+                    // Always verify the source block itself; the receivable listing is only a hint.
+                    BigInteger amount = sendAmountFor(index, source);
+                    if (entry.getValue() != null && entry.getValue().compareTo(amount) != 0)
+                    {
+                        throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Node reported "
+                                + "inconsistent amounts for source block " + entry.getKey());
+                    }
                     received.add(receiveLocked(index, head, source, amount));
                 }
                 catch (LightWalletException ex)
@@ -418,24 +453,32 @@ public final class LightWallet
 
     /**
      * Read the chain head and settle any block of this account whose outcome is still unknown, so that a new
-     * block is never built on the same previous as a block that may yet be confirmed. Caller holds the lock.
+     * block is never built on the same previous as a block that may yet be confirmed. The returned head of an opened
+     * account is verified (see {@link #verifyHead}). Caller holds the lock.
      */
     private AccountState prepareHead(int index) throws LightWalletException
     {
-        AccountState state = readAccount(index);
         Unresolved pending = unresolved.get(index);
+        if (pending != null && pending.block == null)
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Account " + index + " has an "
+                    + "unreadable stored block with unknown outcome (" + pending.problem + "); not building on it "
+                    + "until the record is checked and removed by an operator");
+        }
+
+        AccountState state = readAccount(index);
         if (pending == null)
         {
-            return state;
+            return verifyHead(index, state);
         }
 
         byte[] pendingHash = pending.block.hash();
         if (Arrays.equals(state.frontier(), pendingHash))
         {
-            unresolved.remove(index, pending);
+            removeUnresolved(index, pending);
             log.info("Light wallet: block " + pending.block.hashHex() + " of account " + index
                     + " (outcome was unknown) is on the ledger");
-            return state;
+            return verifyHead(index, state);
         }
 
         if (Arrays.equals(state.frontier(), pending.previous))
@@ -448,6 +491,8 @@ public final class LightWallet
             }
             catch (LightWalletException ex)
             {
+                // Only an exact, known node rejection (see isDefinitiveRejection) proves the block will never be on
+                // the ledger; a Gap, an unrecognised error or no answer keeps it pending.
                 if (ex.kind() != LightWalletException.Kind.REJECTED)
                 {
                     throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Earlier block "
@@ -457,16 +502,121 @@ public final class LightWallet
                 log.warning("Light wallet: earlier block " + pending.block.hashHex() + " was rejected: "
                         + ex.getMessage());
             }
-            return readAccount(index);
+            return verifyHead(index, readAccount(index));
         }
 
         // The chain moved past our previous without our block as frontier: it is either buried under later
         // blocks or lost to a competing block. Either way a new block will not share its previous.
         Boolean present = blockExists(pendingHash);
-        unresolved.remove(index, pending);
+        removeUnresolved(index, pending);
         log.warning("Light wallet: earlier block " + pending.block.hashHex() + " of account " + index
                 + (Boolean.TRUE.equals(present) ? " is on the ledger" : " is not the frontier and was superseded"));
-        return state;
+        return verifyHead(index, state);
+    }
+
+    /**
+     * Replace the node-reported balance and representative of an opened account with values from its verified
+     * frontier block: fetched with {@code block_info}, rebuilt locally, its hash must equal the reported frontier,
+     * its account must be ours and its signature must verify with our public key. A lying node can then only make
+     * us build on a stale (but genuine) frontier, which the network rejects as a fork, never on a forged balance.
+     * Any mismatch is UNAVAILABLE. Unopened accounts have nothing to verify.
+     */
+    private AccountState verifyHead(int index, AccountState state) throws LightWalletException
+    {
+        if (!state.opened())
+        {
+            return state;
+        }
+        byte[] frontier = state.frontier();
+        String frontierHex = Hex.encode(frontier);
+        JsonObject contents = blockContents(frontier);
+        if (contents == null)
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Frontier block " + frontierHex
+                    + " of account " + index + " was not found by block_info");
+        }
+        String type = optString(contents, "type");
+        if (!"state".equals(type))
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Frontier block " + frontierHex
+                    + " of account " + index + " is a legacy '" + type + "' block; only state-block chains are "
+                    + "supported");
+        }
+
+        StateBlock block;
+        try
+        {
+            block = StateBlock.fromRpcJson(contents);
+        }
+        catch (RuntimeException ex)
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Malformed frontier block "
+                    + frontierHex + " of account " + index, ex);
+        }
+        byte[] ours = publicKey(index);
+        if (!Arrays.equals(block.hash(), frontier))
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Frontier block contents of "
+                    + "account " + index + " hash to " + block.hashHex() + ", not the reported " + frontierHex);
+        }
+        if (!Arrays.equals(block.getAccountPublicKey(), ours))
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Frontier block " + frontierHex
+                    + " does not belong to account " + index);
+        }
+        byte[] signature = block.getSignature();
+        if (signature == null || !NanoKeys.verify(ours, frontier, signature))
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "Frontier block " + frontierHex
+                    + " of account " + index + " is not signed by this account's key");
+        }
+
+        String representative = NanoKeys.address(NanoKeys.publicKeyFromAddress(block.getRepresentative()), prefix);
+        if (state.balance().compareTo(block.getBalance()) != 0)
+        {
+            log.warning("Light wallet: node reported balance " + state.balance() + " raw for account " + index
+                    + " but its verified frontier block says " + block.getBalance() + " raw; using the latter");
+        }
+        return new AccountState(true, frontier, block.getBalance(), representative);
+    }
+
+    /** @return the {@code contents} object of a block via {@code block_info}, or null if the node does not know it */
+    private JsonObject blockContents(byte[] hash) throws LightWalletException
+    {
+        String hex = Hex.encode(hash);
+        JsonObject request = new JsonObject();
+        request.addProperty("action", "block_info");
+        request.addProperty("hash", hex);
+        request.addProperty("json_block", "true");
+        JsonObject response = call(request);
+        String error = errorOf(response);
+        if (error != null)
+        {
+            if (error.equalsIgnoreCase(BLOCK_NOT_FOUND))
+            {
+                return null;
+            }
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "block_info failed: " + error);
+        }
+        try
+        {
+            return contentsOf(response);
+        }
+        catch (RuntimeException ex)
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE,
+                    "Malformed block_info response for " + hex, ex);
+        }
+    }
+
+    private static JsonObject contentsOf(JsonObject response)
+    {
+        JsonElement c = response.get("contents");
+        if (c == null || c.isJsonNull())
+        {
+            throw new IllegalArgumentException("Missing contents");
+        }
+        return c.isJsonObject() ? c.getAsJsonObject() : JsonParser.parseString(c.getAsString()).getAsJsonObject();
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -476,7 +626,16 @@ public final class LightWallet
     private String publishNew(int index, StateBlock unsigned, String subtype, byte[] previous)
             throws LightWalletException
     {
-        StateBlock signed = unsigned.signed(privateKey(index));
+        byte[] key = privateKey(index);
+        StateBlock signed;
+        try
+        {
+            signed = unsigned.signed(key);
+        }
+        finally
+        {
+            Arrays.fill(key, (byte) 0);
+        }
         StateBlock ready = signed.withWork(obtainWork(index, signed.workRoot()));
         return publish(index, ready, subtype, previous);
     }
@@ -571,14 +730,19 @@ public final class LightWallet
         }
     }
 
-    private Reply process(StateBlock block, String subtype)
+    private JsonObject processRequest(StateBlock block, String subtype)
     {
         JsonObject request = new JsonObject();
         request.addProperty("action", "process");
         request.addProperty("json_block", "true");
         request.addProperty("subtype", subtype);
         request.add("block", block.toRpcJson(prefix));
+        return request;
+    }
 
+    private Reply process(StateBlock block, String subtype)
+    {
+        JsonObject request = processRequest(block, subtype);
         JsonObject response;
         try
         {
@@ -609,7 +773,10 @@ public final class LightWallet
 
     private String succeeded(int index, StateBlock block)
     {
-        unresolved.remove(index);
+        if (unresolved.remove(index) != null)
+        {
+            clearStored(index);
+        }
         discardPrecomputed(index);
         schedulePrecompute(index, block.hash());
         log.fine("Light wallet: account " + index + " published " + block.hashHex());
@@ -619,9 +786,9 @@ public final class LightWallet
     private LightWalletException rejected(int index, byte[] hash, String message)
     {
         Unresolved pending = unresolved.get(index);
-        if (pending != null && Arrays.equals(pending.block.hash(), hash))
+        if (pending != null && pending.block != null && Arrays.equals(pending.block.hash(), hash))
         {
-            unresolved.remove(index, pending);
+            removeUnresolved(index, pending);
         }
         discardPrecomputed(index);
         log.warning("Light wallet: " + message);
@@ -632,6 +799,15 @@ public final class LightWallet
                                          Throwable cause)
     {
         unresolved.put(index, new Unresolved(block, subtype, previous));
+        try
+        {
+            store.save(index, processRequest(block, subtype).toString());
+        }
+        catch (RuntimeException ex)
+        {
+            log.log(Level.SEVERE, "Light wallet: could not persist block " + block.hashHex() + " of account " + index
+                    + " with unknown outcome; it is only remembered until restart", ex);
+        }
         log.severe("Light wallet: " + message + " (account " + index + "); it will be republished before the next "
                 + "block on this account");
         return new LightWalletException(LightWalletException.Kind.UNKNOWN_OUTCOME, message, cause);
@@ -685,38 +861,49 @@ public final class LightWallet
         throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "block_info failed: " + error);
     }
 
+    /** Exact node answers for insufficient proof-of-work (the block was not processed; work is regenerated once). */
     static boolean isWorkError(String error)
     {
-        String e = error.toLowerCase(Locale.ROOT);
-        return e.contains("work") && (e.contains("insufficient") || e.contains("threshold") || e.contains("invalid")
-                || e.contains("low"));
+        String e = normalizeError(error);
+        return e.equals("block work is insufficient") || e.equals("block work is less than threshold");
     }
 
     /**
-     * Node verdicts that mean the block is definitely not (and will not be) on the ledger as sent. Strings follow the
-     * Nano/Banano node's {@code process} errors ({@code Fork}, {@code Gap previous block}, {@code Gap source block},
-     * {@code Bad signature}, {@code Negative spend}, {@code Unreceivable}, {@code Balance and amount delta do not
-     * match}, {@code Block work is insufficient} / {@code ... less than threshold}, ...). {@code Old block} is not
-     * here: it means the exact block already exists, which is verified against the ledger instead.
+     * Node verdicts that mean the block is definitely not (and will not be) on the ledger as sent. Only exact
+     * {@code process} error strings of the Nano/Banano node are listed: {@code Fork}, {@code Bad signature},
+     * {@code Balance and amount delta do not match}, {@code Negative spend}, {@code Unreceivable},
+     * {@code Invalid block}, {@code Bad block hash} and the work errors (after one regeneration).
+     *
+     * <p>Deliberately NOT definitive: {@code Gap previous block} / {@code Gap source block} (the node may keep the
+     * block as unchecked and apply it once the dependency arrives), {@code Old block} (the exact block already
+     * exists; verified against the ledger) and every other or partially matching string. Those are checked against
+     * the ledger and otherwise reported as {@code UNKNOWN_OUTCOME}, keeping the block pending.</p>
      */
     static boolean isDefinitiveRejection(String error)
     {
-        String e = error.toLowerCase(Locale.ROOT);
-        return e.equals("fork")
-                || e.startsWith("gap ")                       // Gap previous block / Gap source block / Gap epoch
-                || e.contains("bad signature")
-                || e.contains("balance and amount delta")
-                || e.contains("negative spend")
-                || e.contains("unreceivable")
-                || e.contains("cannot follow")                // block position
-                || e.contains("representative mismatch")
-                || e.contains("burn account")
-                || e.contains("subtype")                      // Invalid block balance for given subtype, ...
-                || e.contains("account mismatch")
-                || e.contains("invalid")                      // Block is invalid, Invalid block, Invalid link, ...
-                || e.contains("unable to parse")
-                || e.contains("unknown command")
-                || isWorkError(error);
+        switch (normalizeError(error))
+        {
+            case "fork":
+            case "bad signature":
+            case "balance and amount delta do not match":
+            case "negative spend":
+            case "unreceivable":
+            case "invalid block":
+            case "bad block hash":
+                return true;
+            default:
+                return isWorkError(error);
+        }
+    }
+
+    private static String normalizeError(String error)
+    {
+        String e = error == null ? "" : error.trim().toLowerCase(Locale.ROOT);
+        while (e.endsWith("."))
+        {
+            e = e.substring(0, e.length() - 1).trim();
+        }
+        return e;
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -911,9 +1098,15 @@ public final class LightWallet
     }
 
     /**
-     * Amount of the send block {@code source}, after checking that it is a send destined to account {@code index}.
-     * Relies on {@code block_info} with {@code json_block}: top-level {@code amount} (raw), {@code subtype} and
-     * {@code contents} ({@code type}, and {@code link} for state blocks or {@code destination} for legacy sends).
+     * Amount of the send block {@code source}, after checking that it is a state send destined to account
+     * {@code index}. Uses {@code block_info} with {@code json_block}: the {@code contents} are rebuilt locally and
+     * must hash to {@code source}, verify with the signature of their own account and link to our public key.
+     *
+     * <p>The amount itself is the node-reported top-level {@code amount}: computing it locally would need the
+     * sender's previous block (and so on). That is acceptable because the network enforces it exactly: a receive
+     * whose balance delta differs from the real send amount is invalid everywhere ("Balance and amount delta do not
+     * match"), so a lying amount can only get our block rejected, never credit or burn funds. The balance it is
+     * added to comes from our own verified frontier (see {@link #verifyHead}).</p>
      */
     private BigInteger sendAmountFor(int index, byte[] source) throws LightWalletException
     {
@@ -939,8 +1132,7 @@ public final class LightWallet
         BigInteger amount;
         try
         {
-            JsonElement c = response.get("contents");
-            contents = c.isJsonObject() ? c.getAsJsonObject() : JsonParser.parseString(c.getAsString()).getAsJsonObject();
+            contents = contentsOf(response);
             amount = new BigInteger(stringField(response, "amount"));
         }
         catch (RuntimeException ex)
@@ -950,41 +1142,39 @@ public final class LightWallet
         }
 
         String type = optString(contents, "type");
-        byte[] destination;
+        if (!"state".equals(type))
+        {
+            throw new LightWalletException(LightWalletException.Kind.INVALID,
+                    "Source block " + sourceHex + " is not a state send (type " + type + ")");
+        }
+        String subtype = optString(response, "subtype");
+        if (!"send".equals(subtype))
+        {
+            throw new LightWalletException(LightWalletException.Kind.INVALID,
+                    "Source block " + sourceHex + " is not a send (subtype " + subtype + ")");
+        }
+
+        StateBlock block;
         try
         {
-            if ("state".equals(type))
-            {
-                String subtype = optString(response, "subtype");
-                if (!"send".equals(subtype))
-                {
-                    throw new LightWalletException(LightWalletException.Kind.INVALID,
-                            "Source block " + sourceHex + " is not a send (subtype " + subtype + ")");
-                }
-                destination = parseHex32(stringField(contents, "link"));
-            }
-            else if ("send".equals(type))
-            {
-                destination = NanoKeys.publicKeyFromAddress(stringField(contents, "destination"));
-            }
-            else
-            {
-                throw new LightWalletException(LightWalletException.Kind.INVALID,
-                        "Source block " + sourceHex + " is not a send (type " + type + ")");
-            }
+            block = StateBlock.fromRpcJson(contents);
         }
         catch (RuntimeException ex)
         {
             throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE,
                     "Malformed block_info contents for " + sourceHex, ex);
         }
-
-        if (!Arrays.equals(destination, publicKey(index)))
+        if (!Arrays.equals(block.hash(), source) || !block.hasValidSignature())
+        {
+            throw new LightWalletException(LightWalletException.Kind.UNAVAILABLE, "block_info contents for "
+                    + sourceHex + " do not match the hash or are not validly signed");
+        }
+        if (!Arrays.equals(block.getLink(), publicKey(index)))
         {
             throw new LightWalletException(LightWalletException.Kind.INVALID,
                     "Source block " + sourceHex + " is not destined to account " + index);
         }
-        if (amount.signum() <= 0)
+        if (amount.signum() <= 0 || amount.compareTo(MAX_BALANCE) > 0)
         {
             throw new LightWalletException(LightWalletException.Kind.INVALID,
                     "Source block " + sourceHex + " has no positive amount");
@@ -1098,6 +1288,84 @@ public final class LightWallet
     // Helpers
     // ------------------------------------------------------------------------------------------------------------
 
+    private void removeUnresolved(int index, Unresolved pending)
+    {
+        if (unresolved.remove(index, pending))
+        {
+            clearStored(index);
+        }
+    }
+
+    private void clearStored(int index)
+    {
+        try
+        {
+            store.clear(index);
+        }
+        catch (RuntimeException ex)
+        {
+            log.log(Level.WARNING, "Light wallet: could not clear the stored unresolved block of account " + index
+                    + "; it will be re-checked against the ledger after a restart", ex);
+        }
+    }
+
+    /** Load blocks with unknown outcome left by a previous run; each must be republished or resolved first. */
+    private void loadUnresolved()
+    {
+        Map<Integer, String> records;
+        try
+        {
+            records = store.loadAll();
+        }
+        catch (RuntimeException ex)
+        {
+            throw new IllegalStateException("Could not load unresolved light-wallet blocks", ex);
+        }
+        if (records == null)
+        {
+            return;
+        }
+        for (Map.Entry<Integer, String> record : records.entrySet())
+        {
+            Integer index = record.getKey();
+            if (index == null || index < 0)
+            {
+                log.severe("Light wallet: ignoring stored unresolved block with invalid account index " + index);
+                continue;
+            }
+            Unresolved loaded;
+            try
+            {
+                JsonObject json = JsonParser.parseString(record.getValue()).getAsJsonObject();
+                String subtype = stringField(json, "subtype");
+                if (!subtype.equals("send") && !subtype.equals("receive") && !subtype.equals("open")
+                        && !subtype.equals("change"))
+                {
+                    throw new IllegalArgumentException("unknown subtype " + subtype);
+                }
+                StateBlock block = StateBlock.fromRpcJson(json.getAsJsonObject("block"));
+                if (!Arrays.equals(block.getAccountPublicKey(), publicKey(index)))
+                {
+                    throw new IllegalArgumentException("block does not belong to this account");
+                }
+                if (!block.hasValidSignature() || block.getWork() == null)
+                {
+                    throw new IllegalArgumentException("block is not signed or has no work");
+                }
+                loaded = new Unresolved(block, subtype, block.getPrevious());
+                log.warning("Light wallet: block " + block.hashHex() + " of account " + index + " had an unknown "
+                        + "outcome before restart; it will be resolved before the next block on this account");
+            }
+            catch (RuntimeException ex)
+            {
+                loaded = Unresolved.unreadable(String.valueOf(ex.getMessage()));
+                log.log(Level.SEVERE, "Light wallet: stored unresolved block of account " + index + " is unreadable;"
+                        + " the account is blocked until the record is removed", ex);
+            }
+            unresolved.put(index, loaded);
+        }
+    }
+
     private <T> T locked(int index, LockedAction<T> action) throws LightWalletException
     {
         if (shutdown)
@@ -1142,7 +1410,18 @@ public final class LightWallet
 
     private byte[] publicKey(int index)
     {
-        return publicKeys.computeIfAbsent(index, i -> NanoKeys.publicKey(privateKey(i))).clone();
+        return publicKeys.computeIfAbsent(index, i ->
+        {
+            byte[] key = privateKey(i);
+            try
+            {
+                return NanoKeys.publicKey(key);
+            }
+            finally
+            {
+                Arrays.fill(key, (byte) 0);
+            }
+        }).clone();
     }
 
     private byte[] privateKey(int index)
@@ -1254,17 +1533,33 @@ public final class LightWallet
         }
     }
 
+    /** A block with unknown outcome, or (block == null) a stored record that could not be read. */
     private static final class Unresolved
     {
         final StateBlock block;
         final String subtype;
         final byte[] previous;
+        final String problem;
 
         Unresolved(StateBlock block, String subtype, byte[] previous)
         {
             this.block = block;
             this.subtype = subtype;
             this.previous = previous.clone();
+            this.problem = null;
+        }
+
+        private Unresolved(String problem)
+        {
+            this.block = null;
+            this.subtype = null;
+            this.previous = null;
+            this.problem = problem;
+        }
+
+        static Unresolved unreadable(String problem)
+        {
+            return new Unresolved(problem);
         }
     }
 

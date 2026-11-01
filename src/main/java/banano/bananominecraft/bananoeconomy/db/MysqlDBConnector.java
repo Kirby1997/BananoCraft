@@ -69,6 +69,17 @@ public class MysqlDBConnector extends BaseDBConnector
     private static final String SQL_ADD_BANKS_WALLET_INDEX =
             "ALTER TABLE " + TABLE_BANKS + " ADD COLUMN " + COLUMN_WALLET_INDEX + " INT NULL";
 
+    /**
+     * UNIQUE indexes that make two records owning the same wallet address / derivation index impossible,
+     * even with several servers on one database. {@code walletIndex} may be NULL on many rows (legacy).
+     */
+    static final String INDEX_USERS_WALLET       = "uq_users_wallet";
+    static final String INDEX_USERS_WALLET_INDEX = "uq_users_walletIndex";
+    static final String INDEX_BANKS_ADDRESS      = "uq_banks_address";
+    static final String INDEX_BANKS_WALLET_INDEX = "uq_banks_walletIndex";
+
+    private static final int MAX_LISTED_DUPLICATES = 20;
+
     private final Plugin plugin;
     private final HikariDataSource dataSource;
 
@@ -131,6 +142,10 @@ public class MysqlDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
+            if (isDuplicateWalletViolation(ex))
+            {
+                throw new DuplicateWalletException("Wallet address or index already taken: " + ex.getMessage(), ex);
+            }
             plugin.getLogger().log(Level.SEVERE, "Failed to insert player record.", ex);
         }
         return false;
@@ -156,6 +171,10 @@ public class MysqlDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
+            if (isDuplicateWalletViolation(ex))
+            {
+                throw new DuplicateWalletException("Wallet address or index already taken: " + ex.getMessage(), ex);
+            }
             plugin.getLogger().log(Level.SEVERE, "Failed to update player record.", ex);
         }
         return false;
@@ -544,6 +563,10 @@ public class MysqlDBConnector extends BaseDBConnector
         }
         catch (Exception ex)
         {
+            if (isDuplicateWalletViolation(ex))
+            {
+                throw new DuplicateWalletException("Bank address or index already taken: " + ex.getMessage(), ex);
+            }
             plugin.getLogger().log(Level.SEVERE, "Failed to insert bank record.", ex);
         }
 
@@ -835,6 +858,12 @@ public class MysqlDBConnector extends BaseDBConnector
             // Tables created by older versions have no walletIndex column.
             addColumnIfMissing(conn, TABLE_USERS, COLUMN_WALLET_INDEX, SQL_ADD_USERS_WALLET_INDEX);
             addColumnIfMissing(conn, TABLE_BANKS, COLUMN_WALLET_INDEX, SQL_ADD_BANKS_WALLET_INDEX);
+
+            // Two servers (or a bug) must never own the same wallet address or derivation index.
+            addUniqueIndexIfMissing(conn, TABLE_USERS, INDEX_USERS_WALLET, "wallet");
+            addUniqueIndexIfMissing(conn, TABLE_USERS, INDEX_USERS_WALLET_INDEX, COLUMN_WALLET_INDEX);
+            addUniqueIndexIfMissing(conn, TABLE_BANKS, INDEX_BANKS_ADDRESS, "address");
+            addUniqueIndexIfMissing(conn, TABLE_BANKS, INDEX_BANKS_WALLET_INDEX, COLUMN_WALLET_INDEX);
         }
         catch (Exception ex)
         {
@@ -870,6 +899,116 @@ public class MysqlDBConnector extends BaseDBConnector
                 plugin.getLogger().log(Level.SEVERE, "Failed to add '" + column + "' column to '" + table + "'.", ex);
             }
         }
+    }
+
+    /**
+     * Creates {@code UNIQUE INDEX indexName (column)} unless it already exists. If it cannot be created
+     * because existing rows already share a value, the duplicates are listed at SEVERE and startup
+     * continues without the constraint (nothing is deleted or changed).
+     */
+    private void addUniqueIndexIfMissing(Connection conn, String table, String indexName, String column)
+    {
+        try
+        {
+            boolean present;
+            try (ResultSet rs = conn.getMetaData().getIndexInfo(conn.getCatalog(), null, table, true, false))
+            {
+                present = false;
+                while (rs.next())
+                {
+                    if (indexName.equalsIgnoreCase(rs.getString("INDEX_NAME")))
+                    {
+                        present = true;
+                        break;
+                    }
+                }
+            }
+
+            if (present)
+            {
+                return;
+            }
+
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "ALTER TABLE " + table + " ADD UNIQUE INDEX " + indexName + " (" + column + ")"))
+            {
+                ps.execute();
+            }
+            plugin.getLogger().info("Added unique index '" + indexName + "' on " + table + "(" + column + ").");
+        }
+        catch (SQLException ex)
+        {
+            // 1061 = duplicate key name: another server sharing this database created it first.
+            if (ex.getErrorCode() == 1061)
+            {
+                return;
+            }
+
+            plugin.getLogger().log(Level.SEVERE, "Could not create the unique index '" + indexName + "' on "
+                    + table + "(" + column + ") - the multi-server duplicate protection is NOT active for it."
+                    + " Existing duplicates: " + describeDuplicates(conn, table, column), ex);
+        }
+    }
+
+    /** Values of {@code column} shared by more than one row, for the SEVERE log; never throws. */
+    private static String describeDuplicates(Connection conn, String table, String column)
+    {
+        final String sql = "SELECT " + column + " AS v, COUNT(*) AS c FROM " + table
+                         + " WHERE " + column + " IS NOT NULL GROUP BY " + column + " HAVING COUNT(*) > 1";
+        StringBuilder out = new StringBuilder();
+        int count = 0;
+
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery())
+        {
+            while (rs.next())
+            {
+                if (count++ < MAX_LISTED_DUPLICATES)
+                {
+                    out.append(out.length() > 0 ? "; " : "").append(rs.getString("v"))
+                            .append(" x").append(rs.getInt("c"));
+                }
+            }
+        }
+        catch (SQLException e)
+        {
+            return "(could not list: " + e.getMessage() + ")";
+        }
+
+        if (count > MAX_LISTED_DUPLICATES)
+        {
+            out.append("; ... and ").append(count - MAX_LISTED_DUPLICATES).append(" more");
+        }
+        return count == 0 ? "(none found - see the error)" : out.toString();
+    }
+
+    /**
+     * True if {@code ex} (or a cause) is a unique-key violation on one of the wallet address / index
+     * indexes (as opposed to e.g. a duplicate primary key).
+     */
+    static boolean isDuplicateWalletViolation(Throwable ex)
+    {
+        for (Throwable t = ex; t != null; t = t.getCause())
+        {
+            if (t instanceof SQLException sql)
+            {
+                boolean duplicateKey = sql.getErrorCode() == 1062 || "23000".equals(sql.getSQLState())
+                        || t instanceof java.sql.SQLIntegrityConstraintViolationException;
+                String message = sql.getMessage();
+
+                if (duplicateKey && message != null
+                        && (message.contains(INDEX_USERS_WALLET) || message.contains(INDEX_USERS_WALLET_INDEX)
+                        || message.contains(INDEX_BANKS_ADDRESS) || message.contains(INDEX_BANKS_WALLET_INDEX)))
+                {
+                    return true;
+                }
+            }
+            if (t.getCause() == t)
+            {
+                break;
+            }
+        }
+        return false;
     }
 
     private static void setNullableInt(PreparedStatement ps, int position, Integer value) throws SQLException

@@ -70,16 +70,22 @@ public class OnJoin implements Listener
                     return;
                 }
 
+                boolean walletReady = false;
+
                 try
                 {
                     plugin.getLogger().info("Creating account for player: " + player.getName());
 
                     if (!economyFuncs.accountCreate(player))
                     {
-                        player.sendMessage(ChatColor.RED + i18n.get(locale, "join.wallet_error"));
+                        // While the startup wallet-index backfill is still running, new accounts are
+                        // deliberately not created yet: say so instead of a generic error.
+                        player.sendMessage(ChatColor.RED + i18n.get(locale,
+                                economyFuncs.isWalletSetupPending() ? "join.wallet_setup_pending" : "join.wallet_error"));
                     }
                     else
                     {
+                        walletReady = true;
                         // Account is ready — subscribe to real-time deposit notifications
                         String wallet = economyFuncs.getWallet(player);
                         webSocket.watchAccount(wallet, player.getUniqueId());
@@ -108,6 +114,15 @@ public class OnJoin implements Listener
                     {
                         plugin.getLogger().log(java.util.logging.Level.WARNING, "Failed to check offline payments on join.", ex);
                     }
+                }
+
+                if (walletReady)
+                {
+                    // Light mode only (no-op in node mode): the plugin signs for every account itself,
+                    // so nothing else pockets a player's pending deposits. Start the proof-of-work for
+                    // their next block and pocket a bounded number of pending blocks. Best-effort, and
+                    // already on this async thread.
+                    economyFuncs.prepareWalletOnJoin(player);
                 }
             }
         }.runTaskAsynchronously(this.plugin);

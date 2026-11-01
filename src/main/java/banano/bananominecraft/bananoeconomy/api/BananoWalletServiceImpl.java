@@ -2,12 +2,16 @@ package banano.bananominecraft.bananoeconomy.api;
 
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 import banano.bananominecraft.bananoeconomy.services.RepresentativeService;
 import banano.bananominecraft.bananoeconomy.validation.Validator;
 
 import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Default {@link BananoWalletService} implementation, backed directly by the plugin's own
@@ -17,6 +21,8 @@ import java.util.UUID;
  */
 public final class BananoWalletServiceImpl implements BananoWalletService
 {
+    private static final Logger LOGGER = Logger.getLogger(BananoWalletServiceImpl.class.getName());
+
     private static final String NO_WALLET_ERROR = "No BananoCraft wallet found for this player.";
     private static final String FROZEN_ERROR = "This player's BananoCraft account is frozen.";
     private static final String INVALID_AMOUNT_ERROR = "Amount must be a positive number.";
@@ -99,6 +105,14 @@ public final class BananoWalletServiceImpl implements BananoWalletService
         {
             String blockHash = rpc.sendTransaction(wallet, destinationAddress, amountBan);
             return SendResult.succeeded(blockHash);
+        }
+        catch (UnknownOutcomeError error)
+        {
+            // Not a failure: a caller that retried or refunded could move the funds twice.
+            LOGGER.log(Level.SEVERE, "UNKNOWN OUTCOME for player " + record.getPlayerName() + " (" + playerId
+                    + "), amount " + amountBan + " BAN, direction send to " + destinationAddress + ": "
+                    + TransferOutcome.UNKNOWN_NOTE + ". Reporting success (unknown=true) to the calling plugin.");
+            return SendResult.unknownOutcome(TransferOutcome.UNKNOWN_NOTE);
         }
         catch (TransactionError error)
         {

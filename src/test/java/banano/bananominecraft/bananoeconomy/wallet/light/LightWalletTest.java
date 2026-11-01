@@ -638,15 +638,29 @@ class LightWalletTest
     void errorClassification()
     {
         assertTrue(LightWallet.isDefinitiveRejection("Fork"));
-        assertTrue(LightWallet.isDefinitiveRejection("Gap previous block"));
-        assertTrue(LightWallet.isDefinitiveRejection("Gap source block"));
+        assertTrue(LightWallet.isDefinitiveRejection("fork."));
         assertTrue(LightWallet.isDefinitiveRejection("Balance and amount delta do not match"));
         assertTrue(LightWallet.isDefinitiveRejection("Bad signature"));
+        assertTrue(LightWallet.isDefinitiveRejection("Negative spend"));
         assertTrue(LightWallet.isDefinitiveRejection("Unreceivable"));
+        assertTrue(LightWallet.isDefinitiveRejection("Invalid block"));
+        assertTrue(LightWallet.isDefinitiveRejection("Bad block hash"));
         assertTrue(LightWallet.isDefinitiveRejection("Block work is insufficient"));
+        assertTrue(LightWallet.isWorkError("Block work is insufficient"));
         assertTrue(LightWallet.isWorkError("Block work is less than threshold"));
+
+        // A Gap means the node may keep the block and apply it later: never definitive.
+        assertFalse(LightWallet.isDefinitiveRejection("Gap previous block"));
+        assertFalse(LightWallet.isDefinitiveRejection("Gap source block"));
+        assertFalse(LightWallet.isDefinitiveRejection("Gap epoch open pending"));
         assertFalse(LightWallet.isDefinitiveRejection("Old block"));
         assertFalse(LightWallet.isDefinitiveRejection("Something unexpected happened"));
+        // Only exact strings: partial matches are not proof of rejection.
+        assertFalse(LightWallet.isDefinitiveRejection("Block is invalid for some new reason"));
+        assertFalse(LightWallet.isDefinitiveRejection("Invalid block subtype"));
+        assertFalse(LightWallet.isDefinitiveRejection("Fork detected? proxy timeout"));
+        assertFalse(LightWallet.isWorkError("invalid work header from proxy"));
+        assertFalse(LightWallet.isDefinitiveRejection(""));
     }
 
     // ------------------------------------------------------------------------------------------ helpers

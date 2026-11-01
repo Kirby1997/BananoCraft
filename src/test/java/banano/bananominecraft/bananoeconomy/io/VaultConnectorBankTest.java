@@ -243,7 +243,7 @@ class VaultConnectorBankTest
 
         EconomyResponse r = connector.bankWithdraw(BANK_NAME, 50.0);
         assertEquals(FAILURE, r.type);
-        verify(bankService, never()).withdraw(anyString(), anyDouble());
+        verify(bankService, never()).withdrawOutcome(anyString(), anyDouble());
     }
 
     @Test
@@ -252,7 +252,7 @@ class VaultConnectorBankTest
         when(bankService.isBankingEnabled()).thenReturn(true);
         when(bankService.bankExists(BANK_NAME)).thenReturn(true);
         when(bankService.getBankBalance(BANK_NAME)).thenReturn(100.0, 50.0);
-        when(bankService.withdraw(BANK_NAME, 50.0)).thenReturn(true);
+        when(bankService.withdrawOutcome(BANK_NAME, 50.0)).thenReturn(TransferOutcome.OK);
 
         EconomyResponse r = connector.bankWithdraw(BANK_NAME, 50.0);
         assertEquals(SUCCESS, r.type);
@@ -266,7 +266,7 @@ class VaultConnectorBankTest
         when(bankService.isBankingEnabled()).thenReturn(true);
         when(bankService.bankExists(BANK_NAME)).thenReturn(true);
         when(bankService.getBankBalance(BANK_NAME)).thenReturn(100.0, 100.0);
-        when(bankService.withdraw(BANK_NAME, 50.0)).thenReturn(false);
+        when(bankService.withdrawOutcome(BANK_NAME, 50.0)).thenReturn(TransferOutcome.FAILED);
 
         EconomyResponse r = connector.bankWithdraw(BANK_NAME, 50.0);
         assertEquals(FAILURE, r.type);
@@ -317,7 +317,7 @@ class VaultConnectorBankTest
     {
         when(bankService.isBankingEnabled()).thenReturn(true);
         when(bankService.bankExists(BANK_NAME)).thenReturn(true);
-        when(bankService.deposit(BANK_NAME, 50.0)).thenReturn(true);
+        when(bankService.depositOutcome(BANK_NAME, 50.0)).thenReturn(TransferOutcome.OK);
         when(bankService.getBankBalance(BANK_NAME)).thenReturn(150.0);
 
         EconomyResponse r = connector.bankDeposit(BANK_NAME, 50.0);
@@ -331,7 +331,7 @@ class VaultConnectorBankTest
     {
         when(bankService.isBankingEnabled()).thenReturn(true);
         when(bankService.bankExists(BANK_NAME)).thenReturn(true);
-        when(bankService.deposit(BANK_NAME, 50.0)).thenReturn(false);
+        when(bankService.depositOutcome(BANK_NAME, 50.0)).thenReturn(TransferOutcome.FAILED);
         when(bankService.getBankBalance(BANK_NAME)).thenReturn(100.0);
 
         assertEquals(FAILURE, connector.bankDeposit(BANK_NAME, 50.0).type);

@@ -21,7 +21,10 @@ import banano.bananominecraft.bananoeconomy.services.BankService;
 import banano.bananominecraft.bananoeconomy.services.RepresentativeService;
 import banano.bananominecraft.bananoeconomy.trackers.BukkitTaskTracker;
 import banano.bananominecraft.bananoeconomy.validation.Validator;
+import banano.bananominecraft.bananoeconomy.wallet.BackfillGate;
+import banano.bananominecraft.bananoeconomy.wallet.FilePendingBlockStore;
 import banano.bananominecraft.bananoeconomy.wallet.LightWalletSigner;
+import banano.bananominecraft.bananoeconomy.wallet.MainThreadGuard;
 import banano.bananominecraft.bananoeconomy.wallet.WalletIndexBackfill;
 import banano.bananominecraft.bananoeconomy.wallet.WalletSigner;
 import banano.bananominecraft.bananoeconomy.wallet.crypto.CpuWorkGenerator;
@@ -30,12 +33,14 @@ import banano.bananominecraft.bananoeconomy.wallet.crypto.WorkGenerator;
 import banano.bananominecraft.bananoeconomy.wallet.light.HttpLightRpc;
 import banano.bananominecraft.bananoeconomy.wallet.light.LightRpc;
 import banano.bananominecraft.bananoeconomy.wallet.light.LightWallet;
+import banano.bananominecraft.bananoeconomy.wallet.light.PendingBlockStore;
 import net.milkbowl.vault.economy.Economy;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.ServicePriority;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.logging.Level;
@@ -56,6 +61,9 @@ public final class BananoEconomyMain extends JavaPlugin
     private LightWallet        lightPlayerWallet;
     private LightWallet        lightBankWallet;
     private WorkGenerator      workGenerator;
+
+    /** Opened when the startup wallet-index backfill has finished; new-index allocation waits for it. */
+    private BackfillGate       backfillGate;
 
     /** Tracks every async task so they can all be cancelled in onDisable. */
     private final BukkitTaskTracker taskTracker = new BukkitTaskTracker();
@@ -89,9 +97,12 @@ public final class BananoEconomyMain extends JavaPlugin
             return;
         }
 
+        this.backfillGate   = new BackfillGate(false, MainThreadGuard.forPlugin(this));
         this.rpc            = createRpc();
         this.economyFuncs   = new EconomyFuncs(this, this.db, this.rpc, this.configEngine);
+        this.economyFuncs.setBackfillGate(this.backfillGate, 30_000L);
         this.bankService    = new BankService(this, this.configEngine, this.rpc, this.db);
+        this.bankService.setBackfillGate(this.backfillGate, 30_000L);
         this.representativeService = new RepresentativeService(this.rpc, this.configEngine);
         this.webSocket      = new BananoWebSocket(this, this.rpc, this.configEngine, this.messageGenerator);
 
@@ -162,6 +173,13 @@ public final class BananoEconomyMain extends JavaPlugin
         {
             setupWallet();
             getLogger().info("Wallet setup complete.");
+
+            // Light mode: start the proof-of-work for the master wallet's next block now, so the first
+            // Vault payment after startup usually finds work ready (no-op in node mode).
+            if (this.configEngine.isLightMode())
+            {
+                this.rpc.precomputeWork(this.configEngine.getMasterWallet());
+            }
 
             setupBankWallet();
             getLogger().info("Bank wallet setup complete.");
@@ -234,10 +252,16 @@ public final class BananoEconomyMain extends JavaPlugin
         LightRpc lightRpc = new HttpLightRpc(http, this.configEngine::getNodeAddress);
         this.workGenerator = new CpuWorkGenerator(this.configEngine.getWorkThreads());
 
-        this.lightPlayerWallet = createLightWallet(this.configEngine.getWalletSeed(), "walletSeed", lightRpc);
+        // Blocks whose outcome is unknown are persisted here (one file per account) so a restart
+        // republishes the same block instead of building a second one on the same previous.
+        File pendingDir = new File(getDataFolder(), "pending-blocks");
+
+        this.lightPlayerWallet = createLightWallet(this.configEngine.getWalletSeed(), "walletSeed", lightRpc,
+                new FilePendingBlockStore(pendingDir.toPath(), "player", getLogger()));
         if (this.configEngine.isBankSeedConfigured())
         {
-            this.lightBankWallet = createLightWallet(this.configEngine.getBankWalletSeed(), "bankWalletSeed", lightRpc);
+            this.lightBankWallet = createLightWallet(this.configEngine.getBankWalletSeed(), "bankWalletSeed",
+                    lightRpc, new FilePendingBlockStore(pendingDir.toPath(), "bank", getLogger()));
         }
 
         LightWalletSigner.IndexLookup lookup = new LightWalletSigner.IndexLookup()
@@ -260,7 +284,8 @@ public final class BananoEconomyMain extends JavaPlugin
     }
 
     /** One local wallet for {@code seedHex}, or {@code null} (after logging) if the seed is unusable. */
-    private LightWallet createLightWallet(String seedHex, String configKey, LightRpc lightRpc)
+    private LightWallet createLightWallet(String seedHex, String configKey, LightRpc lightRpc,
+                                          PendingBlockStore pendingStore)
     {
         byte[] seed = parseSeed(seedHex);
         if (seed == null)
@@ -281,7 +306,7 @@ public final class BananoEconomyMain extends JavaPlugin
         try
         {
             return new LightWallet(seed, "ban_", representative, lightRpc, this.workGenerator,
-                    Work.BANANO_THRESHOLD, getLogger());
+                    Work.BANANO_THRESHOLD, getLogger(), pendingStore);
         }
         catch (IllegalArgumentException e)
         {
@@ -327,40 +352,53 @@ public final class BananoEconomyMain extends JavaPlugin
         if (playerSeed == null && bankSeed == null)
         {
             getLogger().warning("Wallet index backfill skipped: no usable wallet seed.");
+            this.backfillGate.open();
             return;
         }
 
-        BukkitTask task = getServer().getScheduler().runTaskAsynchronously(this, () ->
+        BukkitTask task;
+        try
         {
-            try
+            task = getServer().getScheduler().runTaskAsynchronously(this, () ->
             {
-                WalletIndexBackfill backfill = new WalletIndexBackfill(this.db, getLogger());
+                try
+                {
+                    WalletIndexBackfill backfill = new WalletIndexBackfill(this.db, getLogger());
 
-                if (playerSeed != null)
-                {
-                    backfill.backfillPlayers(WalletIndexBackfill.addressDeriver(playerSeed), scanLimit);
+                    if (playerSeed != null)
+                    {
+                        backfill.backfillPlayers(WalletIndexBackfill.addressDeriver(playerSeed), scanLimit);
+                    }
+                    if (bankSeed != null)
+                    {
+                        backfill.backfillBanks(WalletIndexBackfill.addressDeriver(bankSeed), scanLimit);
+                    }
                 }
-                if (bankSeed != null)
+                catch (Exception e)
                 {
-                    backfill.backfillBanks(WalletIndexBackfill.addressDeriver(bankSeed), scanLimit);
+                    getLogger().log(Level.SEVERE, "Wallet index backfill failed.", e);
                 }
-            }
-            catch (Exception e)
-            {
-                getLogger().log(Level.SEVERE, "Wallet index backfill failed.", e);
-            }
-            finally
-            {
-                if (playerSeed != null)
+                finally
                 {
-                    Arrays.fill(playerSeed, (byte) 0);
+                    if (playerSeed != null)
+                    {
+                        Arrays.fill(playerSeed, (byte) 0);
+                    }
+                    if (bankSeed != null)
+                    {
+                        Arrays.fill(bankSeed, (byte) 0);
+                    }
+
+                    // Finished (or failed): new-account index allocation may proceed.
+                    this.backfillGate.open();
                 }
-                if (bankSeed != null)
-                {
-                    Arrays.fill(bankSeed, (byte) 0);
-                }
-            }
-        });
+            });
+        }
+        catch (RuntimeException e)
+        {
+            this.backfillGate.open();
+            throw e;
+        }
         this.taskTracker.track(task);
     }
 

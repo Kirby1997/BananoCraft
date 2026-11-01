@@ -176,4 +176,60 @@ class StateBlockTest
         assertNotNull(s.withWork(7).getSignature(), "withWork keeps signature");
         assertEquals(7L, b.withWork(7).signed(sk).getWork(), "signed keeps work");
     }
+
+    @Test
+    void fromRpcJson_roundTripsVectors()
+    {
+        for (String[] v : BLOCK_VECTORS)
+        {
+            byte[] sk = Hex.decode(v[0]);
+            StateBlock b = new StateBlock(NanoKeys.address(NanoKeys.publicKey(sk), "ban_"), Hex.decode(v[1]), v[2],
+                    new BigInteger(v[3]), Hex.decode(v[4]), null, null).signed(sk)
+                    .withWork(Long.parseUnsignedLong(v[5], 16));
+            StateBlock parsed = StateBlock.fromRpcJson(b.toRpcJson("ban_"));
+            assertEquals(v[6], parsed.hashHex());
+            assertEquals(v[7], Hex.encode(parsed.getSignature()));
+            assertTrue(parsed.hasValidSignature());
+            assertEquals(b.getWork(), parsed.getWork());
+            assertEquals(new BigInteger(v[3]), parsed.getBalance());
+        }
+    }
+
+    @Test
+    void fromRpcJson_rejectsMalformedAndDetectsTampering()
+    {
+        String[] v = BLOCK_VECTORS[1];
+        byte[] sk = Hex.decode(v[0]);
+        StateBlock b = new StateBlock(NanoKeys.address(NanoKeys.publicKey(sk), "ban_"), Hex.decode(v[1]), v[2],
+                new BigInteger(v[3]), Hex.decode(v[4]), null, null).signed(sk).withWork(1L);
+        JsonObject json = b.toRpcJson("ban_");
+
+        JsonObject legacy = json.deepCopy();
+        legacy.addProperty("type", "send");
+        assertThrows(IllegalArgumentException.class, () -> StateBlock.fromRpcJson(legacy));
+        JsonObject hexBalance = json.deepCopy();
+        hexBalance.addProperty("balance", "0000000000000000000000000000000A");
+        assertThrows(IllegalArgumentException.class, () -> StateBlock.fromRpcJson(hexBalance));
+        JsonObject negative = json.deepCopy();
+        negative.addProperty("balance", "-1");
+        assertThrows(IllegalArgumentException.class, () -> StateBlock.fromRpcJson(negative));
+        JsonObject noSig = json.deepCopy();
+        noSig.remove("signature");
+        assertThrows(IllegalArgumentException.class, () -> StateBlock.fromRpcJson(noSig));
+        JsonObject shortLink = json.deepCopy();
+        shortLink.addProperty("link", "00");
+        assertThrows(IllegalArgumentException.class, () -> StateBlock.fromRpcJson(shortLink));
+        assertThrows(IllegalArgumentException.class, () -> StateBlock.fromRpcJson(null));
+
+        JsonObject noWork = json.deepCopy();
+        noWork.remove("work");
+        assertNull(StateBlock.fromRpcJson(noWork).getWork());
+
+        // A tampered balance changes the recomputed hash and breaks the signature.
+        JsonObject tampered = json.deepCopy();
+        tampered.addProperty("balance", "1000");
+        StateBlock t = StateBlock.fromRpcJson(tampered);
+        assertNotEquals(v[6], t.hashHex());
+        assertFalse(t.hasValidSignature());
+    }
 }

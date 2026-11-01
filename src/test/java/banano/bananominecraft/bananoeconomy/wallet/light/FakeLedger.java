@@ -45,7 +45,11 @@ final class FakeLedger implements LightRpc
         /** Apply the block but answer with an unrecognised error string. */
         APPLY_AND_ODD_ERROR,
         /** Do not apply; answer "Block work is insufficient". */
-        REJECT_WORK
+        REJECT_WORK,
+        /** Do not apply; answer "Gap previous block" (node may still apply it later). */
+        GAP,
+        /** Do not apply; answer an unrecognised error containing "invalid". */
+        ODD_INVALID
     }
 
     static final class Account
@@ -82,6 +86,8 @@ final class FakeLedger implements LightRpc
     final Map<String, AtomicInteger> actionCounts = new ConcurrentHashMap<>();
     /** Runs once inside the next process call before validation (e.g. to append a competing block). */
     Runnable beforeNextProcess;
+    /** If set, rewrites every response (request, honest response) &rarr; response: a lying node. */
+    volatile java.util.function.BiFunction<JsonObject, JsonObject, JsonObject> responseFilter;
     private boolean failNextInfo;
     private final SecureRandom random = new SecureRandom();
 
@@ -109,47 +115,53 @@ final class FakeLedger implements LightRpc
         {
             hook.run();
         }
+        JsonObject response;
         synchronized (this)
         {
             switch (request.get("action").getAsString())
             {
                 case "account_info":
-                    return accountInfo(request);
+                    response = accountInfo(request);
+                    break;
                 case "receivable":
-                    return receivable(request);
+                    response = receivable(request);
+                    break;
                 case "block_info":
-                    return blockInfo(request);
+                    response = blockInfo(request);
+                    break;
                 case "process":
-                    return process(request);
+                    response = process(request);
+                    break;
                 default:
-                    return error("Unknown command");
+                    response = error("Unknown command");
             }
         }
+        java.util.function.BiFunction<JsonObject, JsonObject, JsonObject> filter = responseFilter;
+        return filter == null ? response : filter.apply(request.deepCopy(), response);
     }
 
     // ---------------------------------------------------------------- test helpers
 
-    /** Create an external send to {@code destination} and return its hash. */
+    /** Create an external (validly signed) state send to {@code destination} and return its hash. */
     synchronized String fund(String destination, BigInteger amount)
     {
-        byte[] hash = new byte[32];
-        random.nextBytes(hash);
-        String hex = Hex.encode(hash);
         byte[] destKey = NanoKeys.publicKeyFromAddress(destination);
+        byte[] senderPrivate = new byte[32];
+        random.nextBytes(senderPrivate);
+        byte[] sender = NanoKeys.publicKey(senderPrivate);
+        byte[] previous = new byte[32];
+        random.nextBytes(previous);
+        String senderAddress = NanoKeys.address(sender, PREFIX);
+        StateBlock send = new StateBlock(senderAddress, previous, senderAddress, BigInteger.ZERO, destKey, null, null)
+                .signed(senderPrivate).withWork(0L);
+        String hex = send.hashHex();
 
         Block block = new Block();
-        byte[] sender = new byte[32];
-        random.nextBytes(sender);
         block.account = sender;
         block.subtype = "send";
         block.amount = amount;
         block.balance = BigInteger.ZERO;
-        JsonObject contents = new JsonObject();
-        contents.addProperty("type", "state");
-        contents.addProperty("account", NanoKeys.address(sender, PREFIX));
-        contents.addProperty("link", Hex.encode(destKey));
-        contents.addProperty("link_as_account", destination);
-        block.contents = contents;
+        block.contents = send.toRpcJson(PREFIX);
         blocks.put(hex, block);
 
         Pending p = new Pending();
@@ -286,6 +298,14 @@ final class FakeLedger implements LightRpc
         if (fault == Fault.REJECT_WORK)
         {
             return error("Block work is insufficient");
+        }
+        if (fault == Fault.GAP)
+        {
+            return error("Gap previous block");
+        }
+        if (fault == Fault.ODD_INVALID)
+        {
+            return error("Block is invalid for some new reason");
         }
 
         String err = validateAndApply(block, subtype, json);

@@ -331,6 +331,32 @@ public class RPC
     }
 
     /**
+     * Best-effort: starts generating the proof-of-work for {@code account}'s next block in the
+     * background (light mode; a no-op in node mode), signing wallet = the main player wallet.
+     * Returns immediately and never throws.
+     */
+    public void precomputeWork(String account)
+    {
+        precomputeWork(getWalletID(), account);
+    }
+
+    /** As {@link #precomputeWork(String)} for an account of the given wallet. */
+    public void precomputeWork(String walletId, String account)
+    {
+        try
+        {
+            if (Validator.validateAddress(account))
+            {
+                signer.precomputeWork(walletId, account);
+            }
+        }
+        catch (RuntimeException e)
+        {
+            plugin.getLogger().log(Level.FINE, "Work precompute failed for " + account, e);
+        }
+    }
+
+    /**
      * Returns the addresses of representatives the node currently sees as online/voting.
      * Returns an empty list (rather than throwing) on any RPC or parsing failure, since callers
      * use this as one candidate source among possibly others (e.g. an admin-curated list).

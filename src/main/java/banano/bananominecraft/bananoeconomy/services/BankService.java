@@ -1,12 +1,17 @@
 package banano.bananominecraft.bananoeconomy.services;
 
 import banano.bananominecraft.bananoeconomy.classes.BankRecord;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
+import banano.bananominecraft.bananoeconomy.db.DuplicateWalletException;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 import banano.bananominecraft.bananoeconomy.trackers.TaskTracker;
 import banano.bananominecraft.bananoeconomy.validation.Validator;
+import banano.bananominecraft.bananoeconomy.wallet.BackfillGate;
+import banano.bananominecraft.bananoeconomy.wallet.MainThreadGuard;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -53,8 +58,16 @@ public class BankService
     private final Object bankIndexLock = new Object();
 
     private static final int    BANK_NAME_MAX_LENGTH = 64;
-    private static final int    MAX_ADDRESS_ATTEMPTS = 10;
+    private static final int    DEFAULT_INDEX_SCAN_LIMIT = 10_000;
+    static final long           DEFAULT_BACKFILL_WAIT_MILLIS = 30_000L;
     private static final String BANK_NAME_PATTERN    = "[a-zA-Z0-9_-]+";
+
+    // Light-mode receives need proof-of-work; Vault bank calls may be on the primary thread.
+    private volatile MainThreadGuard threadGuard;
+
+    // New bank indices are only reliable once the startup backfill has matched legacy banks.
+    private volatile BackfillGate backfillGate = BackfillGate.alwaysOpen();
+    private volatile long backfillWaitMillis = DEFAULT_BACKFILL_WAIT_MILLIS;
 
     public BankService(Plugin plugin, ConfigEngine configEngine, RPC rpc, IDBConnector db)
     {
@@ -62,6 +75,32 @@ public class BankService
         this.configEngine = configEngine;
         this.rpc          = rpc;
         this.db           = db;
+        this.threadGuard  = MainThreadGuard.forPlugin(plugin);
+    }
+
+    /** Replaces the primary-thread guard (tests). */
+    public void setThreadGuard(MainThreadGuard guard)
+    {
+        if (guard != null)
+        {
+            this.threadGuard = guard;
+        }
+    }
+
+    /** Gates new-bank index allocation on the startup wallet-index backfill. */
+    public void setBackfillGate(BackfillGate gate, long maxWaitMillis)
+    {
+        if (gate != null)
+        {
+            this.backfillGate = gate;
+            this.backfillWaitMillis = maxWaitMillis;
+        }
+    }
+
+    /** {@code true} while the startup backfill is still running (new banks cannot be created yet). */
+    public boolean isWalletSetupPending()
+    {
+        return !this.backfillGate.isOpen();
     }
 
     /** Uses the given lock (normally EconomyFuncs' master-wallet lock) for master-wallet blocks. */
@@ -75,9 +114,25 @@ public class BankService
 
     /**
      * Best-effort: the transfer has already succeeded regardless of whether this does. If it
-     * fails, the block is simply left pending until the next receive.
+     * fails, the block is simply left pending until the next receive (node mode: the node's own
+     * auto-receive; light mode: receive-on-join, the websocket or a manual /receive).
+     *
+     * <p>In light mode a receive needs proof-of-work (seconds) and this is reached from synchronous
+     * Vault calls that may be on the primary thread: there it is scheduled on a background thread.</p>
      */
     private void tryAutoReceive(String walletId, String recipient, String blockHash)
+    {
+        if (configEngine.isLightMode())
+        {
+            threadGuard.runOffMainThread(() -> receiveNow(walletId, recipient, blockHash));
+        }
+        else
+        {
+            receiveNow(walletId, recipient, blockHash);
+        }
+    }
+
+    private void receiveNow(String walletId, String recipient, String blockHash)
     {
         try
         {
@@ -126,6 +181,14 @@ public class BankService
             return null;
         }
 
+        // Until the startup backfill has matched legacy banks, "highest stored index + 1" is unreliable.
+        if (!backfillGate.awaitOpen(backfillWaitMillis))
+        {
+            plugin.getLogger().warning("Bank '" + name + "' not created: wallet setup is still in progress after"
+                    + " the server start - try again in a minute.");
+            return null;
+        }
+
         // Bank-account indices are allocated as (highest stored bank index + 1) in both wallet modes,
         // so the whole allocate -> derive -> store sequence is serialised: two concurrent creations
         // must never be given the same index.
@@ -155,8 +218,13 @@ public class BankService
                 return null;
             }
 
-            String address = null;
-            for (int attempt = 0; attempt < MAX_ADDRESS_ATTEMPTS; attempt++, index++)
+            final int limit = configEngine.getWalletIndexScanLimit() > 0
+                    ? configEngine.getWalletIndexScanLimit() : DEFAULT_INDEX_SCAN_LIMIT;
+            final int stop = index + limit;
+
+            // Keep going while the address is taken (by a legacy bank, or - on insert - by a record
+            // another server wrote meanwhile), up to walletIndexScanLimit indices.
+            for (; index < stop; index++)
             {
                 String candidate = rpc.accountCreate(index, configEngine.getBankWalletId());
                 if (candidate == null || RPC.ACCOUNT_CREATION_FAILED.equals(candidate)
@@ -165,33 +233,39 @@ public class BankService
                     plugin.getLogger().severe("Failed to derive bank address for '" + name + "'.");
                     return null;
                 }
-                if (!takenAddresses.contains(candidate))
+                if (takenAddresses.contains(candidate))
                 {
-                    address = candidate;
-                    break;
+                    continue;
                 }
+
+                BankRecord bank = new BankRecord(name, candidate, ownerUuid, System.currentTimeMillis(), index);
+
+                try
+                {
+                    if (!db.createBankRecord(bank))
+                    {
+                        plugin.getLogger().warning("Failed to persist bank record for '" + name + "'.");
+                        return null;
+                    }
+                }
+                catch (DuplicateWalletException e)
+                {
+                    plugin.getLogger().warning("Bank index " + index + " (" + candidate
+                            + ") is already taken in the database - trying the next index.");
+                    takenAddresses.add(candidate);
+                    continue;
+                }
+
+                db.addBankMember(name, ownerUuid);
+
+                plugin.getLogger().info("Bank '" + name + "' created at " + candidate);
+
+                return bank;
             }
 
-            if (address == null)
-            {
-                plugin.getLogger().severe("Could not derive an unused bank address for '" + name + "' after "
-                        + MAX_ADDRESS_ATTEMPTS + " attempts — aborting.");
-                return null;
-            }
-
-            BankRecord bank = new BankRecord(name, address, ownerUuid, System.currentTimeMillis(), index);
-
-            if (!db.createBankRecord(bank))
-            {
-                plugin.getLogger().warning("Failed to persist bank record for '" + name + "'.");
-                return null;
-            }
-
-            db.addBankMember(name, ownerUuid);
-
-            plugin.getLogger().info("Bank '" + name + "' created at " + address);
-
-            return bank;
+            plugin.getLogger().severe("Could not derive an unused bank address for '" + name
+                    + "' within walletIndexScanLimit (" + limit + ") indices - aborting.");
+            return null;
         }
     }
 
@@ -282,18 +356,26 @@ public class BankService
      * Moves {@code amount} from the master wallet into the bank sub-account.
      * Intended to be called after the calling plugin has already deducted the
      * same amount from the player via {@code Economy#withdrawPlayer}.
+     *
+     * <p>An unknown outcome (light mode) counts as success; see {@link #depositOutcome}.</p>
      */
     public boolean deposit(String bankName, double amount)
+    {
+        return depositOutcome(bankName, amount).isSuccess();
+    }
+
+    /** As {@link #deposit} but distinguishes {@link TransferOutcome#UNKNOWN} from a plain success. */
+    public TransferOutcome depositOutcome(String bankName, double amount)
     {
         BankRecord bank = db.getBankRecord(bankName);
         if (bank == null)
         {
-            return false;
+            return TransferOutcome.FAILED;
         }
 
         if (!Double.isFinite(amount) || amount <= 0)
         {
-            return false;
+            return TransferOutcome.FAILED;
         }
 
         ReentrantLock lock = this.masterWalletLock;
@@ -303,20 +385,27 @@ public class BankService
         {
             if (rpc.getBalance(rpc.getMasterWallet()) < amount)
             {
-                return false;
+                return TransferOutcome.FAILED;
             }
 
             String blockHash = rpc.sendTransaction(rpc.getMasterWallet(), bank.getAddress(), amount);
             tryAutoReceive(configEngine.getBankWalletId(), bank.getAddress(), blockHash);
             bankBalanceCache.remove(bankName);
 
-            return true;
+            return TransferOutcome.OK;
+        }
+        catch (UnknownOutcomeError e)
+        {
+            bankBalanceCache.remove(bankName);
+            logUnknownOutcome(bankName, amount, "bank deposit (server to bank)");
+
+            return TransferOutcome.UNKNOWN;
         }
         catch (TransactionError e)
         {
             plugin.getLogger().log(Level.WARNING, "Bank deposit failed for '" + bankName + "'.", e);
 
-            return false;
+            return TransferOutcome.FAILED;
         }
         finally
         {
@@ -328,27 +417,35 @@ public class BankService
      * Moves {@code amount} from the bank sub-account into the master wallet.
      * Intended to be called before the calling plugin credits the same amount
      * to the player via {@code Economy#depositPlayer}.
+     *
+     * <p>An unknown outcome (light mode) counts as success; see {@link #withdrawOutcome}.</p>
      */
     public boolean withdraw(String bankName, double amount)
+    {
+        return withdrawOutcome(bankName, amount).isSuccess();
+    }
+
+    /** As {@link #withdraw} but distinguishes {@link TransferOutcome#UNKNOWN} from a plain success. */
+    public TransferOutcome withdrawOutcome(String bankName, double amount)
     {
         BankRecord bank = db.getBankRecord(bankName);
         if (bank == null)
         {
-            return false;
+            return TransferOutcome.FAILED;
         }
 
         if (!Double.isFinite(amount) || amount <= 0)
         {
-            return false;
+            return TransferOutcome.FAILED;
         }
 
         double liveBalance = rpc.getBalance(bank.getAddress());
         if (liveBalance < amount)
         {
-            // Update the cache with the fresh value we just fetched — prevents a
+            // Update the cache with the fresh value we just fetched - prevents a
             // stale (higher) balance from persisting after a failed withdrawal.
             bankBalanceCache.put(bankName, liveBalance);
-            return false;
+            return TransferOutcome.FAILED;
         }
 
         try
@@ -370,14 +467,29 @@ public class BankService
                 lock.unlock();
             }
 
-            return true;
+            return TransferOutcome.OK;
+        }
+        catch (UnknownOutcomeError e)
+        {
+            bankBalanceCache.remove(bankName);
+            logUnknownOutcome(bankName, amount, "bank withdrawal (bank to server)");
+
+            return TransferOutcome.UNKNOWN;
         }
         catch (TransactionError e)
         {
             plugin.getLogger().log(Level.WARNING, "Bank withdrawal failed for '" + bankName + "'.", e);
 
-            return false;
+            return TransferOutcome.FAILED;
         }
+    }
+
+    private void logUnknownOutcome(String bankName, double amount, String direction)
+    {
+        plugin.getLogger().severe("UNKNOWN OUTCOME for bank '" + bankName + "', amount " + amount
+                + " BAN, direction " + direction + ": " + TransferOutcome.UNKNOWN_NOTE
+                + ". Reporting success to the caller; the wallet engine will resolve that block before"
+                + " anything else is built on the account.");
     }
 
     // -------------------------------------------------------------------------

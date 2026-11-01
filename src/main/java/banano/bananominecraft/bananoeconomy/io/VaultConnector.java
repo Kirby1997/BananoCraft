@@ -1,6 +1,7 @@
 package banano.bananominecraft.bananoeconomy.io;
 
 import banano.bananominecraft.bananoeconomy.classes.BankRecord;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.services.BankService;
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
@@ -14,6 +15,12 @@ import java.util.List;
 
 public class VaultConnector implements Economy
 {
+    /**
+     * Message on a SUCCESS response whose transfer outcome is unknown (light mode: published, answer
+     * lost). Reporting a failure would make a shop retry or refund and could move the funds twice.
+     */
+    static final String UNKNOWN_OUTCOME_MESSAGE = TransferOutcome.UNKNOWN_NOTE;
+
     private static final EconomyResponse NOT_ONLINE =
             new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE, "Player is not online.");
 
@@ -234,11 +241,13 @@ public class VaultConnector implements Economy
                     "Insufficient funds.");
         }
 
-        boolean success = economyFuncs.removeBalanceFP(offlinePlayer, amount);
+        TransferOutcome outcome = economyFuncs.removeBalanceFPOutcome(offlinePlayer, amount);
+        boolean success = outcome != null && outcome.isSuccess();
         double newBalance = success ? oldBalance - amount : oldBalance;
         return new EconomyResponse(amount, newBalance,
                 success ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
-                success ? null : "Withdrawal failed.");
+                outcome == TransferOutcome.UNKNOWN ? UNKNOWN_OUTCOME_MESSAGE
+                        : success ? null : "Withdrawal failed.");
     }
 
     @Override
@@ -290,11 +299,14 @@ public class VaultConnector implements Economy
             return ACCOUNT_FROZEN;
         }
 
-        boolean success = economyFuncs.addBalanceTP(offlinePlayer, amount);
+        TransferOutcome outcome = economyFuncs.addBalanceTPOutcome(offlinePlayer, amount);
+        boolean success = outcome != null && outcome.isSuccess();
         double newBalance = economyFuncs.getBalance(offlinePlayer);
         return new EconomyResponse(amount, newBalance,
                 success ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
-                success ? null : "Deposit failed (server wallet has insufficient funds or the node is unavailable).");
+                outcome == TransferOutcome.UNKNOWN ? UNKNOWN_OUTCOME_MESSAGE
+                        : success ? null
+                        : "Deposit failed (server wallet has insufficient funds or the node is unavailable).");
     }
 
     @Override
@@ -349,6 +361,12 @@ public class VaultConnector implements Economy
 
         if (bank == null)
         {
+            if (bankService.isWalletSetupPending())
+            {
+                return new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
+                        "Wallet setup is still in progress after the server start - try again in a minute.");
+            }
+
             return new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
                     "Bank '" + name + "' already exists or could not be created.");
         }
@@ -430,11 +448,13 @@ public class VaultConnector implements Economy
                     "Insufficient bank funds.");
         }
 
-        boolean success = bankService.withdraw(name, amount);
+        TransferOutcome outcome = bankService.withdrawOutcome(name, amount);
+        boolean success = outcome != null && outcome.isSuccess();
         double newBalance = bankService.getBankBalance(name);
         return new EconomyResponse(amount, newBalance,
                 success ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
-                success ? null : "Bank withdrawal failed.");
+                outcome == TransferOutcome.UNKNOWN ? UNKNOWN_OUTCOME_MESSAGE
+                        : success ? null : "Bank withdrawal failed.");
     }
 
     @Override
@@ -455,11 +475,13 @@ public class VaultConnector implements Economy
             return BANK_NOT_FOUND;
         }
 
-        boolean success = bankService.deposit(name, amount);
+        TransferOutcome outcome = bankService.depositOutcome(name, amount);
+        boolean success = outcome != null && outcome.isSuccess();
         double newBalance = bankService.getBankBalance(name);
         return new EconomyResponse(amount, newBalance,
                 success ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
-                success ? null : "Bank deposit failed.");
+                outcome == TransferOutcome.UNKNOWN ? UNKNOWN_OUTCOME_MESSAGE
+                        : success ? null : "Bank deposit failed.");
     }
 
     @Override
