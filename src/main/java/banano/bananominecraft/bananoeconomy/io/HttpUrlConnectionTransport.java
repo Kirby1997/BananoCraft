@@ -69,9 +69,12 @@ public class HttpUrlConnectionTransport implements HttpTransport
                 }
             }
         }
-        finally
+        catch (IOException ex)
         {
+            // Only drop the socket on failure: after a fully read, closed response the JDK returns the
+            // connection to its keep-alive pool, so the next RPC skips a new TCP/TLS handshake.
             con.disconnect();
+            throw ex;
         }
 
         return response.toString(StandardCharsets.UTF_8).trim();
