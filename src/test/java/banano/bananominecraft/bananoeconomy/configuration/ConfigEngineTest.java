@@ -550,15 +550,18 @@ class ConfigEngineTest
     @Test
     void WalletSeedExistingBackupFileIsNotOverwritten() throws Exception
     {
+        // An existing backup means this server already had a seed: config.yml lost it, so nothing
+        // may be regenerated (that would silently switch wallets) and the backup must survive.
         File existing = new File(tempDir, "seed-backup.txt");
         Files.writeString(existing.toPath(), "OLD BACKUP");
 
-        new ConfigEngine(plugin);
+        ConfigEngine engine = new ConfigEngine(plugin);
 
         assertEquals("OLD BACKUP", Files.readString(existing.toPath()));
+        assertEquals("", engine.getWalletSeed());
         File[] others = tempDir.listFiles((dir, name) -> name.startsWith("seed-backup-") && name.endsWith(".txt"));
         assertNotNull(others);
-        assertEquals(1, others.length, "The new seed must be backed up to a separate file");
+        assertEquals(0, others.length, "No new seed, so no new backup file");
     }
 
     @Test

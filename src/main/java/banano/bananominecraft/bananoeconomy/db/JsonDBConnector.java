@@ -388,10 +388,10 @@ public class JsonDBConnector extends BaseDBConnector
             {
                 // One instance per player: a concurrent load must not replace a record that
                 // something else (e.g. a freeze) is already using.
-                PlayerRecord cached = playerRecords.putIfAbsent(playerUUID, record);
-                if (cached != null)
+                PlayerRecord existing = playerRecords.putIfAbsent(playerUUID, record);
+                if (existing != null)
                 {
-                    record = cached;
+                    record = existing;
                 }
             }
             plugin.getLogger().info("Player loaded: " + record.getPlayerName());
