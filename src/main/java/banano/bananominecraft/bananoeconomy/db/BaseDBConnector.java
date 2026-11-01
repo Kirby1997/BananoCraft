@@ -57,13 +57,20 @@ public class BaseDBConnector implements IDBConnector
     @Override
     public PlayerRecord createPlayerRecord(Player player, String walletAddress)
     {
+        return createPlayerRecord(player, walletAddress, null);
+    }
+
+    @Override
+    public PlayerRecord createPlayerRecord(Player player, String walletAddress, Integer walletIndex)
+    {
         if (!hasPlayerRecord(player))
         {
             PlayerRecord playerRecord = new PlayerRecord(
                     player.getUniqueId().toString(),
                     player.getName(),
                     walletAddress,
-                    false);
+                    false,
+                    walletIndex);
 
             if (this.insertPlayerRecord(playerRecord))
             {
@@ -94,6 +101,12 @@ public class BaseDBConnector implements IDBConnector
     @Override
     public boolean updatePlayerWallet(Player player, String wallet)
     {
+        return updatePlayerWallet(player, wallet, null);
+    }
+
+    @Override
+    public boolean updatePlayerWallet(Player player, String wallet, Integer walletIndex)
+    {
         if (player == null || wallet == null || wallet.isEmpty())
         {
             return false;
@@ -110,7 +123,8 @@ public class BaseDBConnector implements IDBConnector
                 existing.getPlayerUUID(),
                 existing.getPlayerName(),
                 wallet,
-                existing.isFrozen());
+                existing.isFrozen(),
+                walletIndex != null ? walletIndex : existing.getWalletIndex());
 
         if (!updatePlayerRecord(updated))
         {
@@ -119,6 +133,10 @@ public class BaseDBConnector implements IDBConnector
 
         // Mutate the cached instance in place so anyone already holding it sees the new wallet.
         existing.setWallet(wallet);
+        if (walletIndex != null)
+        {
+            existing.setWalletIndex(walletIndex);
+        }
         this.playerRecords.put(player.getUniqueId(), existing);
 
         return true;
@@ -163,6 +181,129 @@ public class BaseDBConnector implements IDBConnector
 
     @Override
     public boolean isAlreadyAssignedToOtherPlayer(String walletAddress, Player currentPlayer)
+    {
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Wallet derivation indices — cache-backed defaults (subclasses query/persist)
+    // -------------------------------------------------------------------------
+
+    @Override
+    public int getMaxPlayerWalletIndex()
+    {
+        int max = 0;
+        for (PlayerRecord record : playerRecords.values())
+        {
+            if (record.getWalletIndex() != null)
+            {
+                max = Math.max(max, record.getWalletIndex());
+            }
+        }
+        return max;
+    }
+
+    @Override
+    public int getMaxBankWalletIndex()
+    {
+        int max = 0;
+        for (BankRecord record : bankRecords.values())
+        {
+            if (record.getWalletIndex() != null)
+            {
+                max = Math.max(max, record.getWalletIndex());
+            }
+        }
+        return max;
+    }
+
+    @Override
+    public Integer getPlayerWalletIndex(String address)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+        for (PlayerRecord record : playerRecords.values())
+        {
+            if (address.equals(record.getWallet()))
+            {
+                return record.getWalletIndex();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public Integer getBankWalletIndex(String address)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+        for (BankRecord record : bankRecords.values())
+        {
+            if (address.equals(record.getAddress()))
+            {
+                return record.getWalletIndex();
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public List<PlayerRecord> getPlayerRecordsMissingWalletIndex()
+    {
+        return this.playerRecords.values().stream().filter(x -> x.getWalletIndex() == null).toList();
+    }
+
+    @Override
+    public boolean setPlayerWalletIndex(String playerUuid, int walletIndex)
+    {
+        if (playerUuid == null || !persistPlayerWalletIndex(playerUuid, walletIndex))
+        {
+            return false;
+        }
+
+        try
+        {
+            PlayerRecord cached = this.playerRecords.get(UUID.fromString(playerUuid));
+            if (cached != null)
+            {
+                cached.setWalletIndex(walletIndex);
+            }
+        }
+        catch (IllegalArgumentException ignored)
+        {
+            // not a UUID: nothing can be cached under it
+        }
+        return true;
+    }
+
+    /** Writes the index to storage. Backends override; the default cannot persist anything. */
+    protected boolean persistPlayerWalletIndex(String playerUuid, int walletIndex)
+    {
+        return false;
+    }
+
+    @Override
+    public boolean setBankWalletIndex(String bankName, int walletIndex)
+    {
+        if (bankName == null || !persistBankWalletIndex(bankName, walletIndex))
+        {
+            return false;
+        }
+
+        BankRecord cached = this.bankRecords.get(bankName);
+        if (cached != null)
+        {
+            cached.setWalletIndex(walletIndex);
+        }
+        return true;
+    }
+
+    /** Writes the index to storage. Backends override; the default cannot persist anything. */
+    protected boolean persistBankWalletIndex(String bankName, int walletIndex)
     {
         return false;
     }

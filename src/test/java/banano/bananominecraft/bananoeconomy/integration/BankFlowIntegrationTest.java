@@ -68,7 +68,7 @@ class BankFlowIntegrationTest
         when(configEngine.isBankSeedConfigured()).thenReturn(true);
         when(configEngine.getBankWalletId()).thenReturn(BANK_WALLET_ID);
         when(rpc.getMasterWallet()).thenReturn(MASTER_ADDR);
-        when(rpc.accountCreate(-1, BANK_WALLET_ID)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET_ID))).thenReturn(BANK_ADDR);
 
         db          = new JsonDBConnector(plugin);
         bankService = new BankService(plugin, configEngine, rpc, db);
@@ -324,9 +324,9 @@ class BankFlowIntegrationTest
     @Test
     void multipleBanks_areIndependent() throws TransactionError
     {
-        when(rpc.accountCreate(-1, BANK_WALLET_ID))
-                .thenReturn(BANK_ADDR)   // first createBank
-                .thenReturn(BANK_ADDR_2); // second createBank
+        // Bank accounts are created at explicit indices: highest stored + 1, so 1 then 2.
+        when(rpc.accountCreate(eq(1), eq(BANK_WALLET_ID))).thenReturn(BANK_ADDR);   // first createBank
+        when(rpc.accountCreate(eq(2), eq(BANK_WALLET_ID))).thenReturn(BANK_ADDR_2); // second createBank
 
         OfflinePlayer owner2 = offlinePlayer("00000000-0000-0000-0000-000000000002");
 

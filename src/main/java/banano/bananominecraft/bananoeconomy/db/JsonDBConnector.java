@@ -53,6 +53,12 @@ public class JsonDBConnector extends BaseDBConnector
     private final ConcurrentHashMap<String, String> claimedWallets = new ConcurrentHashMap<>();
 
     /**
+     * wallet address → stored seed-derivation index, for every player record that has one. Backs the
+     * max-index and address→index queries without re-reading every player file.
+     */
+    private final ConcurrentHashMap<String, Integer> walletIndexes = new ConcurrentHashMap<>();
+
+    /**
      * One monitor per target file so that concurrent saves of the same file are
      * serialised. Only one lock is ever held at a time, so this cannot deadlock.
      */
@@ -122,6 +128,7 @@ public class JsonDBConnector extends BaseDBConnector
         if (playerRecord.getWallet() != null)
         {
             claimedWallets.put(playerRecord.getWallet(), playerRecord.getPlayerUUID());
+            trackWalletIndex(playerRecord.getWallet(), playerRecord.getWalletIndex());
         }
 
         plugin.getLogger().info("Player file '" + file.getName() + "' saved successfully.");
@@ -136,20 +143,141 @@ public class JsonDBConnector extends BaseDBConnector
     }
 
     @Override
-    public boolean updatePlayerWallet(Player player, String wallet)
+    public boolean updatePlayerWallet(Player player, String wallet, Integer walletIndex)
     {
         PlayerRecord existing = player == null ? null : getPlayerRecord(player);
         String oldWallet = existing == null ? null : existing.getWallet();
 
-        boolean updated = super.updatePlayerWallet(player, wallet);
+        boolean updated = super.updatePlayerWallet(player, wallet, walletIndex);
 
         // insertPlayerRecord has already indexed the new wallet; drop the stale entry.
         if (updated && oldWallet != null && !oldWallet.equals(wallet))
         {
             claimedWallets.remove(oldWallet, player.getUniqueId().toString());
+            walletIndexes.remove(oldWallet);
         }
 
         return updated;
+    }
+
+    // -------------------------------------------------------------------------
+    // IDBConnector — wallet derivation indices
+    // -------------------------------------------------------------------------
+
+    private void trackWalletIndex(String wallet, Integer walletIndex)
+    {
+        if (walletIndex != null)
+        {
+            walletIndexes.put(wallet, walletIndex);
+        }
+        else
+        {
+            walletIndexes.remove(wallet);
+        }
+    }
+
+    @Override
+    public int getMaxPlayerWalletIndex()
+    {
+        int max = 0;
+        for (Integer index : walletIndexes.values())
+        {
+            max = Math.max(max, index);
+        }
+        return max;
+    }
+
+    @Override
+    public Integer getPlayerWalletIndex(String address)
+    {
+        return address == null ? null : walletIndexes.get(address);
+    }
+
+    @Override
+    public List<PlayerRecord> getPlayerRecordsMissingWalletIndex()
+    {
+        List<PlayerRecord> missing = new ArrayList<>();
+        File[] files = dataLocation.listFiles((dir, name) -> PLAYER_FILE_NAME.matcher(name).matches());
+
+        if (files == null)
+        {
+            return missing;
+        }
+
+        for (File file : files)
+        {
+            if (file.length() == 0)
+            {
+                continue;
+            }
+
+            PlayerRecord record = readPlayerFile(file);
+            if (record != null && record.getWallet() != null && record.getWalletIndex() == null)
+            {
+                missing.add(record);
+            }
+        }
+
+        return missing;
+    }
+
+    @Override
+    protected boolean persistPlayerWalletIndex(String playerUuid, int walletIndex)
+    {
+        final File file = new File(this.dataLocation, playerUuid + ".json");
+
+        // Update the instance the rest of the plugin is using if the player is online; otherwise
+        // a copy read from the file. Either way the whole file is rewritten atomically.
+        PlayerRecord cached = null;
+        try
+        {
+            cached = this.playerRecords.get(UUID.fromString(playerUuid));
+        }
+        catch (IllegalArgumentException ex)
+        {
+            return false;
+        }
+
+        final PlayerRecord record = cached != null ? cached : (file.isFile() ? readPlayerFile(file) : null);
+        if (record == null)
+        {
+            return false;
+        }
+
+        final Integer previous = record.getWalletIndex();
+        record.setWalletIndex(walletIndex);
+
+        if (!writeJsonAtomically(file, new GsonBuilder().create(), () -> record))
+        {
+            record.setWalletIndex(previous);
+            return false;
+        }
+
+        if (record.getWallet() != null)
+        {
+            walletIndexes.put(record.getWallet(), walletIndex);
+        }
+        return true;
+    }
+
+    @Override
+    protected boolean persistBankWalletIndex(String bankName, int walletIndex)
+    {
+        BankRecord record = bankRecords.get(bankName);
+        if (record == null)
+        {
+            return false;
+        }
+
+        final Integer previous = record.getWalletIndex();
+        record.setWalletIndex(walletIndex);
+
+        if (!saveBanks())
+        {
+            record.setWalletIndex(previous);
+            return false;
+        }
+        return true;
     }
 
     @Override
@@ -350,6 +478,7 @@ public class JsonDBConnector extends BaseDBConnector
                 if (record != null && record.getWallet() != null)
                 {
                     claimedWallets.put(record.getWallet(), record.getPlayerUUID());
+                    trackWalletIndex(record.getWallet(), record.getWalletIndex());
                 }
             }
             catch (Exception ex)
@@ -388,10 +517,10 @@ public class JsonDBConnector extends BaseDBConnector
             {
                 // One instance per player: a concurrent load must not replace a record that
                 // something else (e.g. a freeze) is already using.
-                PlayerRecord cached = playerRecords.putIfAbsent(playerUUID, record);
-                if (cached != null)
+                PlayerRecord existing = playerRecords.putIfAbsent(playerUUID, record);
+                if (existing != null)
                 {
-                    record = cached;
+                    record = existing;
                 }
             }
             plugin.getLogger().info("Player loaded: " + record.getPlayerName());
@@ -526,11 +655,11 @@ public class JsonDBConnector extends BaseDBConnector
         }
     }
 
-    private void saveBanks()
+    private boolean saveBanks()
     {
         File file = new File(dataLocation, "banks.json");
 
-        writeJsonAtomically(file, new GsonBuilder().create(), () -> bankRecords.values().toArray());
+        return writeJsonAtomically(file, new GsonBuilder().create(), () -> bankRecords.values().toArray());
     }
 
     private void loadBankMembers()

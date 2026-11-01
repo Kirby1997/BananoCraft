@@ -1,5 +1,7 @@
 package banano.bananominecraft.bananoeconomy.configuration;
 
+import banano.bananominecraft.bananoeconomy.wallet.WalletSigner;
+import banano.bananominecraft.bananoeconomy.wallet.crypto.NanoKeys;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.Plugin;
 
@@ -13,6 +15,7 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Single source of truth for all runtime-mutable plugin configuration values.
@@ -35,6 +38,14 @@ public class ConfigEngine
     public static final int MAX_HISTORY_TRANSACTIONS     = 100;
     public static final int DEFAULT_HISTORY_TRANSACTIONS = 10;
 
+    public static final String WALLET_MODE_NODE = "node";
+    public static final String WALLET_MODE_LIGHT = "light";
+
+    public static final int DEFAULT_WORK_THREADS = 2;
+    public static final int MAX_WORK_THREADS = 32;
+    public static final int DEFAULT_WALLET_INDEX_SCAN_LIMIT = 10_000;
+    public static final int MAX_WALLET_INDEX_SCAN_LIMIT = 1_000_000;
+
     private static final String SEED_PLACEHOLDER      = "INSERT WALLET SEED HERE";
     private static final String WALLET_ID_PLACEHOLDER = "INSERT WALLET ID FROM NODE HERE";
     private static final String BANK_SEED_PLACEHOLDER = "INSERT BANK WALLET SEED HERE";
@@ -53,6 +64,12 @@ public class ConfigEngine
     // --- bank wallet ---
     private String bankWalletSeed = "";
     private String bankWalletId   = "";
+
+    // --- wallet mode (node = node-held wallet, light = sign locally; see README) ---
+    private String walletMode = WALLET_MODE_NODE;
+    private int    workThreads = DEFAULT_WORK_THREADS;
+    private String defaultRepresentative = "";
+    private int    walletIndexScanLimit = DEFAULT_WALLET_INDEX_SCAN_LIMIT;
 
     // --- block explorer ---
     private String explorerAccount = "https://creeper.banano.cc/explorer/account/";
@@ -266,6 +283,8 @@ public class ConfigEngine
             plugin.getLogger().info("Loaded " + this.representatives.size() + " curated representative(s).");
         }
 
+        initialiseWalletMode(configuration);
+
         // Nag the admin until they delete the one-time seed backup file.
         // Skip on the startup that just wrote the file — the generation SEVERE is sufficient.
         if (!seedJustGenerated && new File(plugin.getDataFolder(), SEED_BACKUP_FILENAME).exists())
@@ -273,6 +292,70 @@ public class ConfigEngine
             plugin.getLogger().severe(
                     "'" + SEED_BACKUP_FILENAME + "' still exists in the plugin folder. " +
                     "Back up the seed phrase(s) inside it, then DELETE the file.");
+        }
+    }
+
+    /**
+     * Reads walletMode / workThreads / defaultRepresentative / walletIndexScanLimit. In light mode
+     * there are no node wallets, so walletId / bankWalletId are replaced in memory with the light
+     * wallet markers (which tell the signer which seed to use); {@link #save()} never writes those
+     * markers, so the node IDs in config.yml survive for a later switch back to node mode.
+     */
+    private void initialiseWalletMode(FileConfiguration configuration)
+    {
+        String mode = configuration.getString("walletMode", WALLET_MODE_NODE);
+        mode = mode == null ? WALLET_MODE_NODE : mode.trim().toLowerCase(Locale.ROOT);
+        if (!mode.equals(WALLET_MODE_NODE) && !mode.equals(WALLET_MODE_LIGHT))
+        {
+            plugin.getLogger().warning("Unknown walletMode '" + mode + "' - using '" + WALLET_MODE_NODE
+                    + "'. Valid values: node, light.");
+            mode = WALLET_MODE_NODE;
+        }
+        this.walletMode = mode;
+        plugin.getLogger().info("Wallet mode: " + this.walletMode);
+
+        int threads = configuration.getInt("workThreads", DEFAULT_WORK_THREADS);
+        if (threads < 1 || threads > MAX_WORK_THREADS)
+        {
+            plugin.getLogger().warning("workThreads must be between 1 and " + MAX_WORK_THREADS + " (got " + threads
+                    + ") - using " + DEFAULT_WORK_THREADS + ".");
+            threads = DEFAULT_WORK_THREADS;
+        }
+        this.workThreads = threads;
+
+        String configuredRep = configuration.getString("defaultRepresentative", "");
+        configuredRep = configuredRep == null ? "" : configuredRep.trim();
+        if (!configuredRep.isEmpty() && !NanoKeys.isValidAddress(configuredRep, "ban_"))
+        {
+            plugin.getLogger().warning("defaultRepresentative is not a valid ban_ address - ignoring it.");
+            configuredRep = "";
+        }
+        if (configuredRep.isEmpty())
+        {
+            for (String candidate : this.representatives)
+            {
+                if (candidate != null && NanoKeys.isValidAddress(candidate.trim(), "ban_"))
+                {
+                    configuredRep = candidate.trim();
+                    break;
+                }
+            }
+        }
+        this.defaultRepresentative = configuredRep;
+
+        int scanLimit = configuration.getInt("walletIndexScanLimit", DEFAULT_WALLET_INDEX_SCAN_LIMIT);
+        if (scanLimit < 0 || scanLimit > MAX_WALLET_INDEX_SCAN_LIMIT)
+        {
+            plugin.getLogger().warning("walletIndexScanLimit must be between 0 and " + MAX_WALLET_INDEX_SCAN_LIMIT
+                    + " (got " + scanLimit + ") - using " + DEFAULT_WALLET_INDEX_SCAN_LIMIT + ".");
+            scanLimit = DEFAULT_WALLET_INDEX_SCAN_LIMIT;
+        }
+        this.walletIndexScanLimit = scanLimit;
+
+        if (isLightMode())
+        {
+            this.walletId = WalletSigner.LIGHT_PLAYER_WALLET_ID;
+            this.bankWalletId = isBankSeedConfigured() ? WalletSigner.LIGHT_BANK_WALLET_ID : "";
         }
     }
 
@@ -411,7 +494,11 @@ public class ConfigEngine
         FileConfiguration config = this.plugin.getConfig();
 
         config.set("IP",                  this.nodeAddress);
-        config.set("walletID",            this.walletId);
+        if (!isLightMode())
+        {
+            // In light mode walletId is only the in-memory light wallet marker; keep the node's ID.
+            config.set("walletID",        this.walletId);
+        }
         config.set("masterWallet",        this.masterWallet);
         config.set("exploreaccount",      this.explorerAccount);
         config.set("exploreblock",        this.explorerBlock);
@@ -419,7 +506,7 @@ public class ConfigEngine
         config.set("maximumtransactionhistorycount", this.maximumTransactionHistoryCount);
         config.set("websocketUrl",        this.websocketUrl);
 
-        if (!this.bankWalletId.isEmpty())
+        if (!this.bankWalletId.isEmpty() && !isLightMode())
         {
             config.set("bankWalletID", this.bankWalletId);
         }
@@ -464,6 +551,25 @@ public class ConfigEngine
                 && !this.bankWalletSeed.isEmpty()
                 && !this.bankWalletSeed.equalsIgnoreCase(BANK_SEED_PLACEHOLDER);
     }
+
+    // --- wallet mode ---
+
+    /** {@code "node"} (wallet held by the node) or {@code "light"} (keys derived and blocks signed locally). */
+    public String  getWalletMode()                { return this.walletMode; }
+
+    public boolean isLightMode()                  { return WALLET_MODE_LIGHT.equals(this.walletMode); }
+
+    /** CPU threads used for local proof-of-work in light mode (default 2). */
+    public int     getWorkThreads()               { return this.workThreads; }
+
+    /**
+     * Representative assigned to new accounts in light mode: {@code defaultRepresentative}, else the
+     * first {@code representatives} entry, else {@code ""} (the caller then picks a fallback).
+     */
+    public String  getDefaultRepresentative()     { return this.defaultRepresentative; }
+
+    /** Highest derivation index tried when matching legacy records to the seed (default 10000). */
+    public int     getWalletIndexScanLimit()      { return this.walletIndexScanLimit; }
 
     // --- block explorer ---
 

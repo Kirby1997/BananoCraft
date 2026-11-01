@@ -27,6 +27,7 @@ public class MysqlDBConnector extends BaseDBConnector
             "    address     VARCHAR(100) NOT NULL," +
             "    owner_uuid  VARCHAR(75)  NOT NULL," +
             "    created_at  BIGINT       NOT NULL," +
+            "    walletIndex INT          NULL," +
             "    PRIMARY KEY (bank_name)" +
             ") ENGINE=INNODB";
 
@@ -43,6 +44,7 @@ public class MysqlDBConnector extends BaseDBConnector
             "    name        VARCHAR(50)  NOT NULL," +
             "    wallet      VARCHAR(100) NOT NULL," +
             "    frozen      BOOLEAN      NOT NULL DEFAULT FALSE," +
+            "    walletIndex INT          NULL," +
             "    PRIMARY KEY (playerUUID)" +
             ") ENGINE=INNODB";
 
@@ -57,6 +59,15 @@ public class MysqlDBConnector extends BaseDBConnector
             "    transdate      TIMESTAMP   NOT NULL," +
             "    PRIMARY KEY (id)" +
             ") ENGINE=INNODB";
+
+    /** Seed-derivation index column on users and banks; NULL for legacy rows. */
+    private static final String COLUMN_WALLET_INDEX = "walletIndex";
+
+    private static final String SQL_ADD_USERS_WALLET_INDEX =
+            "ALTER TABLE " + TABLE_USERS + " ADD COLUMN " + COLUMN_WALLET_INDEX + " INT NULL";
+
+    private static final String SQL_ADD_BANKS_WALLET_INDEX =
+            "ALTER TABLE " + TABLE_BANKS + " ADD COLUMN " + COLUMN_WALLET_INDEX + " INT NULL";
 
     private final Plugin plugin;
     private final HikariDataSource dataSource;
@@ -106,7 +117,7 @@ public class MysqlDBConnector extends BaseDBConnector
     protected boolean insertPlayerRecord(PlayerRecord playerRecord)
     {
         final String sql = "INSERT INTO " + TABLE_USERS +
-                           " (playerUUID, name, wallet, frozen) VALUES (?, ?, ?, ?)";
+                           " (playerUUID, name, wallet, frozen, walletIndex) VALUES (?, ?, ?, ?, ?)";
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql))
         {
@@ -114,6 +125,7 @@ public class MysqlDBConnector extends BaseDBConnector
             ps.setString(2, playerRecord.getPlayerName());
             ps.setString(3, playerRecord.getWallet());
             ps.setBoolean(4, playerRecord.isFrozen());
+            setNullableInt(ps, 5, playerRecord.getWalletIndex());
 
             return ps.executeUpdate() > 0;
         }
@@ -128,14 +140,17 @@ public class MysqlDBConnector extends BaseDBConnector
     public boolean updatePlayerRecord(PlayerRecord playerRecord)
     {
         final String sql = "UPDATE " + TABLE_USERS +
-                           " SET name = ?, wallet = ?, frozen = ? WHERE playerUUID = ?";
+                           " SET name = ?, wallet = ?, frozen = ?, " + COLUMN_WALLET_INDEX
+                         + " = COALESCE(?, " + COLUMN_WALLET_INDEX + ") WHERE playerUUID = ?";
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql))
         {
             ps.setString(1, playerRecord.getPlayerName());
             ps.setString(2, playerRecord.getWallet());
             ps.setBoolean(3, playerRecord.isFrozen());
-            ps.setString(4, playerRecord.getPlayerUUID());
+            // COALESCE: a null (unknown) index never erases a stored one.
+            setNullableInt(ps, 4, playerRecord.getWalletIndex());
+            ps.setString(5, playerRecord.getPlayerUUID());
 
             return ps.executeUpdate() > 0;
         }
@@ -179,6 +194,138 @@ public class MysqlDBConnector extends BaseDBConnector
             // Fail closed: "not assigned" would let account creation proceed blind.
             throw new IllegalStateException("Database unavailable: could not check wallet assignment.", ex);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // IDBConnector — wallet derivation indices
+    // -------------------------------------------------------------------------
+
+    @Override
+    public int getMaxPlayerWalletIndex()
+    {
+        return maxIndex(TABLE_USERS);
+    }
+
+    @Override
+    public int getMaxBankWalletIndex()
+    {
+        return maxIndex(TABLE_BANKS);
+    }
+
+    private int maxIndex(String table)
+    {
+        final String sql = "SELECT MAX(" + COLUMN_WALLET_INDEX + ") AS maxindex FROM " + table;
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery())
+        {
+            if (rs.next())
+            {
+                Integer max = readNullableInt(rs, "maxindex");
+                return max == null ? 0 : Math.max(0, max);
+            }
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: guessing could make account creation re-issue an index.
+            throw new IllegalStateException("Database unavailable: could not read the highest wallet index.", ex);
+        }
+    }
+
+    @Override
+    public Integer getPlayerWalletIndex(String address)
+    {
+        return indexOfAddress(TABLE_USERS, "wallet", address);
+    }
+
+    @Override
+    public Integer getBankWalletIndex(String address)
+    {
+        return indexOfAddress(TABLE_BANKS, "address", address);
+    }
+
+    private Integer indexOfAddress(String table, String addressColumn, String address)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+
+        final String sql = "SELECT " + COLUMN_WALLET_INDEX + " FROM " + table + " WHERE " + addressColumn + " = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql))
+        {
+            ps.setString(1, address);
+
+            try (ResultSet rs = ps.executeQuery())
+            {
+                return rs.next() ? readNullableInt(rs, COLUMN_WALLET_INDEX) : null;
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to read wallet index.", ex);
+        }
+        return null;
+    }
+
+    @Override
+    public List<PlayerRecord> getPlayerRecordsMissingWalletIndex()
+    {
+        List<PlayerRecord> records = new ArrayList<>();
+
+        final String sql = "SELECT playerUUID, name, wallet, frozen FROM " + TABLE_USERS
+                         + " WHERE " + COLUMN_WALLET_INDEX + " IS NULL";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery())
+        {
+            while (rs.next())
+            {
+                records.add(new PlayerRecord(
+                        rs.getString("playerUUID"),
+                        rs.getString("name"),
+                        rs.getString("wallet"),
+                        rs.getBoolean("frozen")));
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to query players without a wallet index.", ex);
+        }
+
+        return records;
+    }
+
+    @Override
+    protected boolean persistPlayerWalletIndex(String playerUuid, int walletIndex)
+    {
+        return persistIndex(TABLE_USERS, "playerUUID", playerUuid, walletIndex);
+    }
+
+    @Override
+    protected boolean persistBankWalletIndex(String bankName, int walletIndex)
+    {
+        return persistIndex(TABLE_BANKS, "bank_name", bankName, walletIndex);
+    }
+
+    private boolean persistIndex(String table, String keyColumn, String key, int walletIndex)
+    {
+        final String sql = "UPDATE " + table + " SET " + COLUMN_WALLET_INDEX + " = ? WHERE " + keyColumn + " = ?";
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql))
+        {
+            ps.setInt(1, walletIndex);
+            ps.setString(2, key);
+
+            return ps.executeUpdate() > 0;
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to store wallet index.", ex);
+        }
+        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -339,7 +486,8 @@ public class MysqlDBConnector extends BaseDBConnector
             return cached;
         }
 
-        final String sql = "SELECT bank_name, address, owner_uuid, created_at FROM " + TABLE_BANKS
+        final String sql = "SELECT bank_name, address, owner_uuid, created_at, " + COLUMN_WALLET_INDEX
+                         + " FROM " + TABLE_BANKS
                          + " WHERE bank_name = ?";
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql))
@@ -354,7 +502,8 @@ public class MysqlDBConnector extends BaseDBConnector
                             rs.getString("bank_name"),
                             rs.getString("address"),
                             rs.getString("owner_uuid"),
-                            rs.getLong("created_at"));
+                            rs.getLong("created_at"),
+                            readNullableInt(rs, COLUMN_WALLET_INDEX));
                     bankRecords.put(bankName, record);
 
                     return record;
@@ -373,7 +522,8 @@ public class MysqlDBConnector extends BaseDBConnector
     public boolean createBankRecord(BankRecord bank)
     {
         final String sql = "INSERT INTO " + TABLE_BANKS
-                         + " (bank_name, address, owner_uuid, created_at) VALUES (?, ?, ?, ?)";
+                         + " (bank_name, address, owner_uuid, created_at, " + COLUMN_WALLET_INDEX
+                         + ") VALUES (?, ?, ?, ?, ?)";
 
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql))
@@ -382,6 +532,7 @@ public class MysqlDBConnector extends BaseDBConnector
             ps.setString(2, bank.getAddress());
             ps.setString(3, bank.getOwnerUuid());
             ps.setLong(4,   bank.getCreatedAt());
+            setNullableInt(ps, 5, bank.getWalletIndex());
             boolean success = ps.executeUpdate() > 0;
 
             if (success)
@@ -680,11 +831,63 @@ public class MysqlDBConnector extends BaseDBConnector
             {
                 plugin.getLogger().log(Level.SEVERE, "Failed to create '" + TABLE_BANK_MEMBERS + "' table.", ex);
             }
+
+            // Tables created by older versions have no walletIndex column.
+            addColumnIfMissing(conn, TABLE_USERS, COLUMN_WALLET_INDEX, SQL_ADD_USERS_WALLET_INDEX);
+            addColumnIfMissing(conn, TABLE_BANKS, COLUMN_WALLET_INDEX, SQL_ADD_BANKS_WALLET_INDEX);
         }
         catch (Exception ex)
         {
             plugin.getLogger().log(Level.SEVERE, "Database setup failed — no connection available.", ex);
         }
+    }
+
+    /** Runs {@code alterSql} (ADD COLUMN ... NULL) unless {@code table} already has {@code column}. */
+    private void addColumnIfMissing(Connection conn, String table, String column, String alterSql)
+    {
+        try
+        {
+            boolean present;
+            try (ResultSet rs = conn.getMetaData().getColumns(conn.getCatalog(), null, table, column))
+            {
+                present = rs.next();
+            }
+
+            if (!present)
+            {
+                try (PreparedStatement ps = conn.prepareStatement(alterSql))
+                {
+                    ps.execute();
+                }
+                plugin.getLogger().info("Added column '" + column + "' to the '" + table + "' table.");
+            }
+        }
+        catch (SQLException ex)
+        {
+            // 1060 = duplicate column name: another server sharing this database added it first.
+            if (ex.getErrorCode() != 1060)
+            {
+                plugin.getLogger().log(Level.SEVERE, "Failed to add '" + column + "' column to '" + table + "'.", ex);
+            }
+        }
+    }
+
+    private static void setNullableInt(PreparedStatement ps, int position, Integer value) throws SQLException
+    {
+        if (value == null)
+        {
+            ps.setNull(position, Types.INTEGER);
+        }
+        else
+        {
+            ps.setInt(position, value);
+        }
+    }
+
+    private static Integer readNullableInt(ResultSet rs, String column) throws SQLException
+    {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : Integer.valueOf(value);
     }
 
     /**
@@ -705,7 +908,7 @@ public class MysqlDBConnector extends BaseDBConnector
             return cached;
         }
 
-        final String sql = "SELECT playerUUID, name, wallet, frozen FROM " + TABLE_USERS +
+        final String sql = "SELECT playerUUID, name, wallet, frozen, " + COLUMN_WALLET_INDEX + " FROM " + TABLE_USERS +
                            " WHERE playerUUID = ?";
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql))
@@ -720,16 +923,17 @@ public class MysqlDBConnector extends BaseDBConnector
                             rs.getString("playerUUID"),
                             rs.getString("name"),
                             rs.getString("wallet"),
-                            rs.getBoolean("frozen"));
+                            rs.getBoolean("frozen"),
+                            readNullableInt(rs, COLUMN_WALLET_INDEX));
 
                     if (cacheRecord)
                     {
                         // One instance per player: a concurrent load must not replace a record that
                         // something else (e.g. a freeze) is already using.
-                        PlayerRecord cached = playerRecords.putIfAbsent(playerUUID, record);
-                        if (cached != null)
+                        PlayerRecord existing = playerRecords.putIfAbsent(playerUUID, record);
+                        if (existing != null)
                         {
-                            record = cached;
+                            record = existing;
                         }
                     }
 
@@ -775,7 +979,7 @@ public class MysqlDBConnector extends BaseDBConnector
     {
         List<PlayerRecord> records = new ArrayList<>();
 
-        final String sql = "SELECT playerUUID, name, wallet, frozen FROM " + TABLE_USERS +
+        final String sql = "SELECT playerUUID, name, wallet, frozen, " + COLUMN_WALLET_INDEX + " FROM " + TABLE_USERS +
                            " WHERE frozen = ?";
         try (Connection conn = getConnection();
              PreparedStatement ps = conn.prepareStatement(sql))
@@ -790,7 +994,8 @@ public class MysqlDBConnector extends BaseDBConnector
                             rs.getString("playerUUID"),
                             rs.getString("name"),
                             rs.getString("wallet"),
-                            rs.getBoolean("frozen")));
+                            rs.getBoolean("frozen"),
+                            readNullableInt(rs, COLUMN_WALLET_INDEX)));
                 }
             }
         }

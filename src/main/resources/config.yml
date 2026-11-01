@@ -1,3 +1,28 @@
+# Wallet mode:
+#   node  - (default) the Banano node holds the wallet and signs everything. IP must be YOUR OWN node
+#           with RPC control enabled, because the seed is imported into it (wallet_create).
+#   light - no node wallet needed. The plugin derives keys from the seed itself, signs blocks and
+#           generates the proof-of-work on this server, and only publishes finished blocks with the
+#           `process` RPC. IP may then be ANY Banano RPC endpoint, including a public one: it never
+#           sees the seed or any key. The seed never leaves this server.
+# Switching modes: set walletMode and restart (see "Light wallet mode" in the README). Accounts and
+# the seed stay the same, so no funds move.
+walletMode: node
+
+# Light mode only: CPU threads for local proof-of-work (1 thread ~5.7 s per block, 4 threads ~1.5 s
+# on a typical server CPU; each tip is a send plus the recipient's receive). Default 2.
+workThreads: 2
+
+# Light mode only: representative given to new accounts. Falls back to the first entry of
+# `representatives` below, then to the master wallet itself. Leave empty to use that fallback.
+defaultRepresentative: ""
+
+# Startup backfill (both modes): accounts created by older versions have no stored derivation index.
+# At startup the plugin derives addresses 0..walletIndexScanLimit from the seed(s) and matches them
+# to those records. Records still unmatched are logged at SEVERE (in light mode they cannot spend).
+# Raise this if you ever created more than 10000 accounts in one wallet.
+walletIndexScanLimit: 10000
+
 IP: "INSERT NODE IP HERE"
 walletSeed: "INSERT WALLET SEED HERE"
 # Don't touch walletID unless you know what you're doing

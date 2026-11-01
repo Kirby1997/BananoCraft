@@ -628,13 +628,14 @@ class EconomyFuncsTest {
     void accountCreate_newPlayer_createsRecord_whenWalletValid() {
         when(player.getName()).thenReturn("Alice");
         when(db.hasPlayerRecord(player)).thenReturn(false);
-        when(rpc.accountCreate(-1)).thenReturn(WALLET);
+        when(rpc.accountCreate(anyInt())).thenReturn(WALLET);
         when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(false);
-        when(db.createPlayerRecord(player, WALLET))
+        when(db.createPlayerRecord(player, WALLET, 1))
                 .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
 
         assertTrue(economyFuncs.accountCreate(player));
-        verify(db).createPlayerRecord(player, WALLET);
+        verify(db).createPlayerRecord(player, WALLET, 1);
+        verify(rpc).accountCreate(1);
     }
 
     @Test
@@ -652,21 +653,21 @@ class EconomyFuncsTest {
     void accountCreate_newPlayer_returnsFalse_whenCreationFails() {
         when(player.getName()).thenReturn("Alice");
         when(db.hasPlayerRecord(player)).thenReturn(false);
-        when(rpc.accountCreate(-1)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
+        when(rpc.accountCreate(anyInt())).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
 
         assertFalse(economyFuncs.accountCreate(player));
-        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString(), any());
     }
 
     @Test
     void accountCreate_newPlayer_returnsFalse_whenRetryReturnsSentinel() {
         when(player.getName()).thenReturn("Alice");
         when(db.hasPlayerRecord(player)).thenReturn(false);
-        when(rpc.accountCreate(-1)).thenReturn(WALLET, RPC.ACCOUNT_CREATION_FAILED);
+        when(rpc.accountCreate(anyInt())).thenReturn(WALLET, RPC.ACCOUNT_CREATION_FAILED);
         when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(true);
 
         assertFalse(economyFuncs.accountCreate(player));
-        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString(), any());
         verify(db, never()).isAlreadyAssignedToOtherPlayer(eq(RPC.ACCOUNT_CREATION_FAILED), any(Player.class));
     }
 
@@ -674,10 +675,10 @@ class EconomyFuncsTest {
     void accountCreate_newPlayer_returnsFalse_whenAddressInvalid() {
         when(player.getName()).thenReturn("Alice");
         when(db.hasPlayerRecord(player)).thenReturn(false);
-        when(rpc.accountCreate(-1)).thenReturn("not-an-address");
+        when(rpc.accountCreate(anyInt())).thenReturn("not-an-address");
 
         assertFalse(economyFuncs.accountCreate(player));
-        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString(), any());
     }
 
     @Test
@@ -689,7 +690,7 @@ class EconomyFuncsTest {
 
         assertTrue(economyFuncs.accountCreate(player));
         verify(rpc, never()).accountCreate(anyInt());
-        verify(db, never()).updatePlayerWallet(any(Player.class), anyString());
+        verify(db, never()).updatePlayerWallet(any(Player.class), anyString(), any());
     }
 
     @Test
@@ -698,13 +699,13 @@ class EconomyFuncsTest {
         when(db.hasPlayerRecord(player)).thenReturn(true);
         when(db.getPlayerRecord(player)).thenReturn(
                 new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
-        when(rpc.accountCreate(-1)).thenReturn(WALLET);
+        when(rpc.accountCreate(anyInt())).thenReturn(WALLET);
         when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(false);
-        when(db.updatePlayerWallet(player, WALLET)).thenReturn(true);
+        when(db.updatePlayerWallet(player, WALLET, 1)).thenReturn(true);
 
         assertTrue(economyFuncs.accountCreate(player));
-        verify(db).updatePlayerWallet(player, WALLET);
-        verify(db, never()).createPlayerRecord(any(Player.class), anyString());
+        verify(db).updatePlayerWallet(player, WALLET, 1);
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString(), any());
     }
 
     @Test
@@ -713,10 +714,10 @@ class EconomyFuncsTest {
         when(db.hasPlayerRecord(player)).thenReturn(true);
         when(db.getPlayerRecord(player)).thenReturn(
                 new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
-        when(rpc.accountCreate(-1)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
+        when(rpc.accountCreate(anyInt())).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
 
         assertFalse(economyFuncs.accountCreate(player));
-        verify(db, never()).updatePlayerWallet(any(Player.class), anyString());
+        verify(db, never()).updatePlayerWallet(any(Player.class), anyString(), any());
     }
 
     @Test
@@ -725,11 +726,137 @@ class EconomyFuncsTest {
         when(db.hasPlayerRecord(player)).thenReturn(true);
         when(db.getPlayerRecord(player)).thenReturn(
                 new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
-        when(rpc.accountCreate(-1)).thenReturn(WALLET);
+        when(rpc.accountCreate(anyInt())).thenReturn(WALLET);
         when(db.isAlreadyAssignedToOtherPlayer(WALLET, player)).thenReturn(false);
-        when(db.updatePlayerWallet(player, WALLET)).thenReturn(false);
+        when(db.updatePlayerWallet(player, WALLET, 1)).thenReturn(false);
 
         assertFalse(economyFuncs.accountCreate(player));
+    }
+
+    private static final String ALPHABET = "13456789abcdefghijkmnopqrstuwxyz";
+
+    /** A Validator-valid ban_ address that is unique per index (test fake for account derivation). */
+    private static String addressForIndex(int index) {
+        StringBuilder sb = new StringBuilder("ban_1");
+        for (int i = 0; i < 59; i++) {
+            sb.append(ALPHABET.charAt((index + i * 7) % ALPHABET.length()));
+        }
+        return sb.toString();
+    }
+
+    @Test
+    void accountCreate_newPlayer_usesExplicitIndex_maxStoredPlusOne() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(41);
+        when(rpc.accountCreate(42)).thenReturn(WALLET);
+        when(db.createPlayerRecord(player, WALLET, 42))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false, 42));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(rpc).accountCreate(42);
+        verify(rpc, never()).accountCreate(-1);
+        verify(db).createPlayerRecord(player, WALLET, 42);
+    }
+
+    @Test
+    void accountCreate_newPlayer_firstEverIndexIsOne_neverTheMasterIndexZero() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(1)).thenReturn(WALLET);
+        when(db.createPlayerRecord(player, WALLET, 1))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false, 1));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(rpc, never()).accountCreate(0);
+    }
+
+    @Test
+    void accountCreate_newPlayer_triesNextIndex_whenAddressAlreadyAssigned() {
+        String taken = addressForIndex(5);
+        String free = addressForIndex(6);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(4);
+        when(rpc.accountCreate(5)).thenReturn(taken);
+        when(rpc.accountCreate(6)).thenReturn(free);
+        when(db.isAlreadyAssignedToOtherPlayer(taken, player)).thenReturn(true);
+        when(db.isAlreadyAssignedToOtherPlayer(free, player)).thenReturn(false);
+        when(db.createPlayerRecord(player, free, 6))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", free, false, 6));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(db).createPlayerRecord(player, free, 6);
+    }
+
+    @Test
+    void accountCreate_newPlayer_givesUp_afterTenAssignedAddresses() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(anyInt())).thenAnswer(inv -> addressForIndex(inv.getArgument(0)));
+        when(db.isAlreadyAssignedToOtherPlayer(anyString(), eq(player))).thenReturn(true);
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(rpc, times(10)).accountCreate(anyInt());
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString(), any());
+    }
+
+    @Test
+    void accountCreate_newPlayer_returnsFalse_whenMaxIndexUnreadable() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenThrow(new IllegalStateException("Database unavailable"));
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(rpc, never()).accountCreate(anyInt());
+    }
+
+    @Test
+    void accountCreate_concurrentJoins_neverShareAnIndex() throws Exception {
+        // A stateful fake store: the max index only moves when a record is stored, so any gap between
+        // reading the max and storing the record would hand two players the same index.
+        AtomicInteger storedMax = new AtomicInteger(0);
+        java.util.List<Integer> issued = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        when(db.hasPlayerRecord(any(Player.class))).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenAnswer(inv -> storedMax.get());
+        when(rpc.accountCreate(anyInt())).thenAnswer(inv ->
+        {
+            Thread.sleep(20); // widen the race window
+            return addressForIndex(inv.getArgument(0));
+        });
+        when(db.createPlayerRecord(any(Player.class), anyString(), any())).thenAnswer(inv ->
+        {
+            Integer index = inv.getArgument(2);
+            issued.add(index);
+            storedMax.accumulateAndGet(index, Math::max);
+            return new PlayerRecord(UUID.randomUUID().toString(), "P", inv.getArgument(1), false, index);
+        });
+
+        int joins = 8;
+        ExecutorService pool = Executors.newFixedThreadPool(joins);
+        CountDownLatch go = new CountDownLatch(1);
+        java.util.List<Future<Boolean>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < joins; i++) {
+            Player p = mock(Player.class);
+            when(p.getName()).thenReturn("P" + i);
+            results.add(pool.submit(() -> {
+                go.await();
+                return economyFuncs.accountCreate(p);
+            }));
+        }
+        go.countDown();
+        for (Future<Boolean> f : results) {
+            assertTrue(f.get(10, TimeUnit.SECONDS));
+        }
+        pool.shutdownNow();
+
+        assertEquals(joins, issued.size());
+        assertEquals(joins, new java.util.HashSet<>(issued).size(), "indices must be unique: " + issued);
+        assertEquals(1, java.util.Collections.min(issued));
+        assertEquals(joins, java.util.Collections.max(issued));
     }
 
     // --- accountExists(Player) ---

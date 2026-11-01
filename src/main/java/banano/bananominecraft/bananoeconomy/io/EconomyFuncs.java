@@ -39,6 +39,10 @@ public class EconomyFuncs
     // concurrent withdrawals do. One lock per wallet address, created lazily.
     private final ConcurrentHashMap<String, ReentrantLock> walletLocks = new ConcurrentHashMap<>();
 
+    // Serialises player-wallet index allocation (max stored index + 1) from reading the maximum
+    // until the new record is stored, so two concurrent joins can never be given the same index.
+    private final Object walletIndexLock = new Object();
+
     public EconomyFuncs(Plugin plugin, IDBConnector db, RPC rpc, ConfigEngine configEngine)
     {
         this.plugin = plugin;
@@ -384,25 +388,29 @@ public class EconomyFuncs
         {
             if (!this.db.hasPlayerRecord(player))
             {
-                String wallet = createUniqueWallet(player);
-
-                if (wallet != null)
+                synchronized (this.walletIndexLock)
                 {
-                    PlayerRecord playerRecord = this.db.createPlayerRecord(player, wallet);
+                    NewWallet created = createUniqueWallet(player);
 
-                    if (playerRecord != null)
+                    if (created != null)
                     {
-                        plugin.getLogger().info("Created new wallet for " + playerName);
-                        return true;
+                        PlayerRecord playerRecord =
+                                this.db.createPlayerRecord(player, created.address(), created.index());
+
+                        if (playerRecord != null)
+                        {
+                            plugin.getLogger().info("Created new wallet for " + playerName);
+                            return true;
+                        }
+                        else
+                        {
+                            plugin.getLogger().warning("Could not create new wallet for " + playerName);
+                        }
                     }
                     else
                     {
                         plugin.getLogger().warning("Could not create new wallet for " + playerName);
                     }
-                }
-                else
-                {
-                    plugin.getLogger().warning("Could not create new wallet for " + playerName);
                 }
             }
             else
@@ -420,12 +428,16 @@ public class EconomyFuncs
                     // Legacy/broken record: an earlier failed creation stored the sentinel (or some
                     // other invalid address) as the wallet. Repair it with a fresh account.
                     plugin.getLogger().warning("Stored wallet for " + playerName + " is invalid - creating a new one.");
-                    String wallet = createUniqueWallet(player);
-
-                    if (wallet != null && this.db.updatePlayerWallet(player, wallet))
+                    synchronized (this.walletIndexLock)
                     {
-                        plugin.getLogger().info("Repaired wallet for " + playerName);
-                        return true;
+                        NewWallet created = createUniqueWallet(player);
+
+                        if (created != null
+                                && this.db.updatePlayerWallet(player, created.address(), created.index()))
+                        {
+                            plugin.getLogger().info("Repaired wallet for " + playerName);
+                            return true;
+                        }
                     }
 
                     plugin.getLogger().warning("Could not repair wallet for " + playerName + "!");
@@ -452,41 +464,43 @@ public class EconomyFuncs
                 && Validator.validateAddress(wallet);
     }
 
+    /** A newly derived wallet address together with the seed-derivation index it was created at. */
+    private record NewWallet(String address, int index) {}
+
     /**
-     * Creates a new node account that is valid and not assigned to any other player.
-     * Returns null (after logging a warning) if creation fails or no unique account is found.
+     * Creates a new account that is valid and not assigned to any other player, at an EXPLICIT
+     * derivation index: one more than the highest index stored for any player (minimum 0, so the
+     * first is 1; 0 is the master wallet). If the address at that index is already assigned
+     * (e.g. a legacy record that was never matched to an index) the next index is tried. Callers
+     * hold {@link #walletIndexLock} until the new record is stored.
+     *
+     * <p>Used identically in node and light mode (node mode passes the index to {@code account_create}).
+     * Returns null (after logging a warning) if creation fails or no unique account is found.</p>
      */
-    private String createUniqueWallet(Player player)
+    private NewWallet createUniqueWallet(Player player)
     {
         String playerName = player.getName();
-        String wallet = rpc.accountCreate(-1);
+        int index = this.db.getMaxPlayerWalletIndex() + 1;
 
-        if (!isUsableWallet(wallet))
+        for (int attempt = 1; attempt <= MAX_WALLET_RETRIES; attempt++, index++)
         {
-            plugin.getLogger().warning("Account creation failed for " + playerName + ": " + wallet);
-            return null;
-        }
-
-        int retries = 0;
-        while (this.db.isAlreadyAssignedToOtherPlayer(wallet, player))
-        {
-            if (++retries >= MAX_WALLET_RETRIES)
-            {
-                plugin.getLogger().severe("Could not find a unique wallet for " + playerName
-                        + " after " + MAX_WALLET_RETRIES + " attempts — aborting.");
-                return null;
-            }
-
-            wallet = rpc.accountCreate(-1);
+            String wallet = rpc.accountCreate(index);
 
             if (!isUsableWallet(wallet))
             {
                 plugin.getLogger().warning("Account creation failed for " + playerName + ": " + wallet);
                 return null;
             }
+
+            if (!this.db.isAlreadyAssignedToOtherPlayer(wallet, player))
+            {
+                return new NewWallet(wallet, index);
+            }
         }
 
-        return wallet;
+        plugin.getLogger().severe("Could not find a unique wallet for " + playerName
+                + " after " + MAX_WALLET_RETRIES + " attempts — aborting.");
+        return null;
     }
 
     public void unloadAccount(Player player)

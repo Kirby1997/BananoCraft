@@ -49,6 +49,9 @@ public class BankService
     // Vault player deposits/withdrawals don't interleave on the same account chain.
     private volatile ReentrantLock masterWalletLock = new ReentrantLock(true);
 
+    // Serialises bank-account index allocation (see createBank).
+    private final Object bankIndexLock = new Object();
+
     private static final int    BANK_NAME_MAX_LENGTH = 64;
     private static final int    MAX_ADDRESS_ATTEMPTS = 10;
     private static final String BANK_NAME_PATTERN    = "[a-zA-Z0-9_-]+";
@@ -123,55 +126,73 @@ public class BankService
             return null;
         }
 
-        // After the bank wallet is re-created from its seed on a new node, the node's deterministic
-        // index can rewind and hand out an address an existing bank already owns.
-        Set<String> takenAddresses = new HashSet<>();
-        for (String existingName : db.getAllBankNames())
+        // Bank-account indices are allocated as (highest stored bank index + 1) in both wallet modes,
+        // so the whole allocate -> derive -> store sequence is serialised: two concurrent creations
+        // must never be given the same index.
+        synchronized (bankIndexLock)
         {
-            BankRecord existing = db.getBankRecord(existingName);
-            if (existing != null && existing.getAddress() != null)
+            // Never hand out an address an existing bank already owns (e.g. a legacy bank whose index
+            // was never matched), so keep the set of taken addresses to skip past.
+            Set<String> takenAddresses = new HashSet<>();
+            for (String existingName : db.getAllBankNames())
             {
-                takenAddresses.add(existing.getAddress());
+                BankRecord existing = db.getBankRecord(existingName);
+                if (existing != null && existing.getAddress() != null)
+                {
+                    takenAddresses.add(existing.getAddress());
+                }
             }
-        }
 
-        String address = null;
-        for (int attempt = 0; attempt < MAX_ADDRESS_ATTEMPTS; attempt++)
-        {
-            String candidate = rpc.accountCreate(-1, configEngine.getBankWalletId());
-            if (candidate == null || RPC.ACCOUNT_CREATION_FAILED.equals(candidate)
-                    || !Validator.validateAddress(candidate))
+            int index;
+            try
             {
-                plugin.getLogger().severe("Failed to derive bank address for '" + name + "'.");
+                index = db.getMaxBankWalletIndex() + 1;
+            }
+            catch (IllegalStateException e)
+            {
+                plugin.getLogger().log(Level.SEVERE, "Could not read the highest bank wallet index for '" + name
+                        + "' - not creating the bank.", e);
                 return null;
             }
-            if (!takenAddresses.contains(candidate))
+
+            String address = null;
+            for (int attempt = 0; attempt < MAX_ADDRESS_ATTEMPTS; attempt++, index++)
             {
-                address = candidate;
-                break;
+                String candidate = rpc.accountCreate(index, configEngine.getBankWalletId());
+                if (candidate == null || RPC.ACCOUNT_CREATION_FAILED.equals(candidate)
+                        || !Validator.validateAddress(candidate))
+                {
+                    plugin.getLogger().severe("Failed to derive bank address for '" + name + "'.");
+                    return null;
+                }
+                if (!takenAddresses.contains(candidate))
+                {
+                    address = candidate;
+                    break;
+                }
             }
+
+            if (address == null)
+            {
+                plugin.getLogger().severe("Could not derive an unused bank address for '" + name + "' after "
+                        + MAX_ADDRESS_ATTEMPTS + " attempts — aborting.");
+                return null;
+            }
+
+            BankRecord bank = new BankRecord(name, address, ownerUuid, System.currentTimeMillis(), index);
+
+            if (!db.createBankRecord(bank))
+            {
+                plugin.getLogger().warning("Failed to persist bank record for '" + name + "'.");
+                return null;
+            }
+
+            db.addBankMember(name, ownerUuid);
+
+            plugin.getLogger().info("Bank '" + name + "' created at " + address);
+
+            return bank;
         }
-
-        if (address == null)
-        {
-            plugin.getLogger().severe("Could not derive an unused bank address for '" + name + "' after "
-                    + MAX_ADDRESS_ATTEMPTS + " attempts — aborting.");
-            return null;
-        }
-
-        BankRecord bank = new BankRecord(name, address, ownerUuid, System.currentTimeMillis());
-
-        if (!db.createBankRecord(bank))
-        {
-            plugin.getLogger().warning("Failed to persist bank record for '" + name + "'.");
-            return null;
-        }
-
-        db.addBankMember(name, ownerUuid);
-
-        plugin.getLogger().info("Bank '" + name + "' created at " + address);
-
-        return bank;
     }
 
     public boolean bankExists(String name)

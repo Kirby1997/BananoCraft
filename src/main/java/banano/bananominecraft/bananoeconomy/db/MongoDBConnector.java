@@ -11,6 +11,7 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Indexes;
+import com.mongodb.client.model.Sorts;
 import com.mongodb.MongoWriteException;
 import com.mongodb.client.result.DeleteResult;
 import com.mongodb.client.result.UpdateResult;
@@ -37,6 +38,9 @@ public class MongoDBConnector extends BaseDBConnector
     private static final String COLLECTION_OFFLINE_PAYS  = "offlinepayments";
     private static final String COLLECTION_BANKS         = "banks";
     private static final String COLLECTION_BANK_MEMBERS  = "bank_members";
+
+    /** Seed-derivation index field on user and bank documents; absent for legacy documents. */
+    private static final String FIELD_WALLET_INDEX       = "walletIndex";
 
     /** Fail fast instead of the driver's 30s default when the server is unreachable. */
     private static final int CONNECT_TIMEOUT_SECONDS = 5;
@@ -200,6 +204,11 @@ public class MongoDBConnector extends BaseDBConnector
                     .append("wallet", playerRecord.getWallet())
                     .append("frozen", playerRecord.isFrozen());
 
+            if (playerRecord.getWalletIndex() != null)
+            {
+                document.append(FIELD_WALLET_INDEX, playerRecord.getWalletIndex());
+            }
+
             db.getCollection(COLLECTION_USERS).insertOne(document);
 
             return true;
@@ -222,6 +231,12 @@ public class MongoDBConnector extends BaseDBConnector
                     .append("name",   playerRecord.getPlayerName())
                     .append("wallet", playerRecord.getWallet())
                     .append("frozen", playerRecord.isFrozen());
+
+            // Never overwrite a stored index with null (a stale in-memory copy must not erase it).
+            if (playerRecord.getWalletIndex() != null)
+            {
+                updateFields.append(FIELD_WALLET_INDEX, playerRecord.getWalletIndex());
+            }
 
             BasicDBObject setQuery = new BasicDBObject("$set", updateFields);
 
@@ -452,6 +467,10 @@ public class MongoDBConnector extends BaseDBConnector
                     .append("address",   bank.getAddress())
                     .append("ownerUuid", bank.getOwnerUuid())
                     .append("createdAt", bank.getCreatedAt());
+            if (bank.getWalletIndex() != null)
+            {
+                doc.append(FIELD_WALLET_INDEX, bank.getWalletIndex());
+            }
             db.getCollection(COLLECTION_BANKS).insertOne(doc);
             bankRecords.put(bank.getBankName(), bank);
 
@@ -639,7 +658,136 @@ public class MongoDBConnector extends BaseDBConnector
                 doc.getString("_id"),
                 doc.getString("address"),
                 doc.getString("ownerUuid"),
-                doc.getLong("createdAt"));
+                doc.getLong("createdAt"),
+                readIndex(doc));
+    }
+
+    /** The document's walletIndex, or {@code null} when absent (legacy document). */
+    private static Integer readIndex(Document doc)
+    {
+        Object value = doc.get(FIELD_WALLET_INDEX);
+        return value instanceof Number number ? Integer.valueOf(number.intValue()) : null;
+    }
+
+    // -------------------------------------------------------------------------
+    // IDBConnector — wallet derivation indices
+    // -------------------------------------------------------------------------
+
+    private int maxIndex(String collection)
+    {
+        try
+        {
+            Document top = db.getCollection(collection)
+                    .find(exists(FIELD_WALLET_INDEX))
+                    .sort(Sorts.descending(FIELD_WALLET_INDEX))
+                    .limit(1)
+                    .first();
+
+            Integer index = top == null ? null : readIndex(top);
+            return index == null ? 0 : Math.max(0, index);
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: guessing could make account creation re-issue an index.
+            throw new IllegalStateException("Database unavailable: could not read the highest wallet index.", ex);
+        }
+    }
+
+    @Override
+    public int getMaxPlayerWalletIndex()
+    {
+        return maxIndex(COLLECTION_USERS);
+    }
+
+    @Override
+    public int getMaxBankWalletIndex()
+    {
+        return maxIndex(COLLECTION_BANKS);
+    }
+
+    @Override
+    public Integer getPlayerWalletIndex(String address)
+    {
+        return indexOfAddress(COLLECTION_USERS, "wallet", address);
+    }
+
+    @Override
+    public Integer getBankWalletIndex(String address)
+    {
+        return indexOfAddress(COLLECTION_BANKS, "address", address);
+    }
+
+    private Integer indexOfAddress(String collection, String addressField, String address)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            Document doc = db.getCollection(collection).find(eq(addressField, address)).first();
+            return doc == null ? null : readIndex(doc);
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to read wallet index.", ex);
+            return null;
+        }
+    }
+
+    @Override
+    public List<PlayerRecord> getPlayerRecordsMissingWalletIndex()
+    {
+        List<PlayerRecord> records = new ArrayList<>();
+
+        try
+        {
+            for (Document user : db.getCollection(COLLECTION_USERS).find(exists(FIELD_WALLET_INDEX, false)))
+            {
+                if (user.getString("wallet") != null)
+                {
+                    records.add(new PlayerRecord(
+                            user.getString("_id"),
+                            user.getString("name"),
+                            user.getString("wallet"),
+                            user.getBoolean("frozen", false)));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.WARNING, "Failed to query players without a wallet index.", ex);
+        }
+
+        return records;
+    }
+
+    @Override
+    protected boolean persistPlayerWalletIndex(String playerUuid, int walletIndex)
+    {
+        return persistIndex(COLLECTION_USERS, playerUuid, walletIndex);
+    }
+
+    @Override
+    protected boolean persistBankWalletIndex(String bankName, int walletIndex)
+    {
+        return persistIndex(COLLECTION_BANKS, bankName, walletIndex);
+    }
+
+    private boolean persistIndex(String collection, String id, int walletIndex)
+    {
+        try
+        {
+            UpdateResult result = db.getCollection(collection)
+                    .updateOne(eq("_id", id), new Document("$set", new Document(FIELD_WALLET_INDEX, walletIndex)));
+            return result.getMatchedCount() > 0;
+        }
+        catch (Exception ex)
+        {
+            plugin.getLogger().log(Level.SEVERE, "Failed to store wallet index.", ex);
+        }
+        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -673,7 +821,8 @@ public class MongoDBConnector extends BaseDBConnector
                     playerUUID.toString(),
                     user.getString("name"),
                     user.getString("wallet"),
-                    user.getBoolean("frozen", false));
+                    user.getBoolean("frozen", false),
+                    readIndex(user));
 
             if (cacheRecord)
             {
@@ -739,7 +888,8 @@ public class MongoDBConnector extends BaseDBConnector
                         user.getString("_id"),
                         user.getString("name"),
                         user.getString("wallet"),
-                        user.getBoolean("frozen", false)));
+                        user.getBoolean("frozen", false),
+                        readIndex(user)));
             }
         }
         catch (Exception ex)

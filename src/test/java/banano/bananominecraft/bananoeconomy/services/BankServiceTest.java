@@ -98,7 +98,7 @@ class BankServiceTest
     void CreateBankAcceptsAlphanumericHyphenUnderscore()
     {
         when(db.bankNameExists(anyString())).thenReturn(false);
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenReturn(BANK_ADDR);
         when(db.createBankRecord(any())).thenReturn(true);
 
         assertNotNull(service.createBank("treasury",    OWNER_UUID));
@@ -115,20 +115,98 @@ class BankServiceTest
         when(db.bankNameExists(anyString())).thenReturn(false);
         when(db.getAllBankNames()).thenReturn(java.util.List.of("old-bank"));
         when(db.getBankRecord("old-bank")).thenReturn(new BankRecord("old-bank", BANK_ADDR, OWNER_UUID, 0L));
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(BANK_ADDR, OTHER_BANK_ADDR);
+        when(db.getMaxBankWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(2, BANK_WALLET)).thenReturn(OTHER_BANK_ADDR);
         when(db.createBankRecord(any())).thenReturn(true);
 
         BankRecord created = service.createBank("new-bank", OWNER_UUID);
 
         assertNotNull(created);
         assertEquals(OTHER_BANK_ADDR, created.getAddress());
+        assertEquals(2, created.getWalletIndex(), "the skipped index must not be reused or recorded");
+    }
+
+    @Test
+    void CreateBankUsesExplicitIndexOneAboveHighestStoredBankIndex()
+    {
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenReturn(7);
+        when(rpc.accountCreate(8, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(db.createBankRecord(any())).thenReturn(true);
+
+        BankRecord created = service.createBank("new-bank", OWNER_UUID);
+
+        assertNotNull(created);
+        assertEquals(8, created.getWalletIndex());
+        verify(rpc, never()).accountCreate(eq(-1), anyString());
+    }
+
+    @Test
+    void CreateBankFirstIndexIsOne()
+    {
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(db.createBankRecord(any())).thenReturn(true);
+
+        assertEquals(1, service.createBank("new-bank", OWNER_UUID).getWalletIndex());
+    }
+
+    @Test
+    void CreateBankReturnsNullWhenMaxIndexUnreadable()
+    {
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenThrow(new IllegalStateException("Database unavailable"));
+
+        assertNull(service.createBank("new-bank", OWNER_UUID));
+        verify(rpc, never()).accountCreate(anyInt(), anyString());
+    }
+
+    @Test
+    void CreateBankConcurrentCreationsNeverShareAnIndex() throws Exception
+    {
+        java.util.concurrent.atomic.AtomicInteger storedMax = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.List<Integer> issued = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenAnswer(inv -> storedMax.get());
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenAnswer(inv ->
+        {
+            Thread.sleep(20); // widen the race window
+            int index = inv.getArgument(0);
+            return "ban_3" + String.valueOf("13456789abcdefghijkmnopqrstuwxyz".charAt(index % 32)).repeat(59);
+        });
+        when(db.createBankRecord(any())).thenAnswer(inv ->
+        {
+            BankRecord record = inv.getArgument(0);
+            issued.add(record.getWalletIndex());
+            storedMax.accumulateAndGet(record.getWalletIndex(), Math::max);
+            return true;
+        });
+
+        int creations = 6;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(creations);
+        java.util.List<java.util.concurrent.Future<BankRecord>> results = new java.util.ArrayList<>();
+        for (int i = 0; i < creations; i++)
+        {
+            final String bankName = "bank" + i;
+            results.add(pool.submit(() -> service.createBank(bankName, OWNER_UUID)));
+        }
+        for (java.util.concurrent.Future<BankRecord> result : results)
+        {
+            assertNotNull(result.get(10, java.util.concurrent.TimeUnit.SECONDS));
+        }
+        pool.shutdownNow();
+
+        assertEquals(creations, new java.util.HashSet<>(issued).size(), "indices must be unique: " + issued);
     }
 
     @Test
     void CreateBankRejectsInvalidNodeAddress()
     {
         when(db.bankNameExists(anyString())).thenReturn(false);
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn("not-an-address");
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenReturn("not-an-address");
 
         assertNull(service.createBank("treasury", OWNER_UUID));
         verify(db, never()).createBankRecord(any());
@@ -151,7 +229,7 @@ class BankServiceTest
     void CreateBankReturnsNullWhenRPCFails()
     {
         when(db.bankNameExists(BANK_NAME)).thenReturn(false);
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenReturn(RPC.ACCOUNT_CREATION_FAILED);
 
         assertNull(service.createBank(BANK_NAME, OWNER_UUID));
         verify(db, never()).createBankRecord(any());
@@ -161,7 +239,7 @@ class BankServiceTest
     void CreateBankReturnsNullWhenPersistFails()
     {
         when(db.bankNameExists(BANK_NAME)).thenReturn(false);
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenReturn(BANK_ADDR);
         when(db.createBankRecord(any())).thenReturn(false);
 
         assertNull(service.createBank(BANK_NAME, OWNER_UUID));
@@ -172,7 +250,7 @@ class BankServiceTest
     void CreateBankSuccessReturnsBankRecord()
     {
         when(db.bankNameExists(BANK_NAME)).thenReturn(false);
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenReturn(BANK_ADDR);
         when(db.createBankRecord(any())).thenReturn(true);
 
         BankRecord result = service.createBank(BANK_NAME, OWNER_UUID);
@@ -187,7 +265,7 @@ class BankServiceTest
     void CreateBankSuccessAddsOwnerAsMember()
     {
         when(db.bankNameExists(BANK_NAME)).thenReturn(false);
-        when(rpc.accountCreate(-1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenReturn(BANK_ADDR);
         when(db.createBankRecord(any())).thenReturn(true);
 
         service.createBank(BANK_NAME, OWNER_UUID);
