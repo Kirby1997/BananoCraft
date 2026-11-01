@@ -1,6 +1,7 @@
 package banano.bananominecraft.bananoeconomy.io;
 
 import banano.bananominecraft.bananoeconomy.classes.BankRecord;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.services.BankService;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.OfflinePlayer;
@@ -335,6 +336,47 @@ class VaultConnectorBankTest
         when(bankService.getBankBalance(BANK_NAME)).thenReturn(100.0);
 
         assertEquals(FAILURE, connector.bankDeposit(BANK_NAME, 50.0).type);
+    }
+
+    @Test
+    void BankDepositUnknownOutcomeIsReportedAsSuccessWithNote()
+    {
+        when(bankService.isBankingEnabled()).thenReturn(true);
+        when(bankService.bankExists(BANK_NAME)).thenReturn(true);
+        when(bankService.depositOutcome(BANK_NAME, 50.0)).thenReturn(TransferOutcome.UNKNOWN);
+        when(bankService.getBankBalance(BANK_NAME)).thenReturn(100.0);
+
+        EconomyResponse r = connector.bankDeposit(BANK_NAME, 50.0);
+        assertEquals(SUCCESS, r.type);
+        assertTrue(r.errorMessage.contains("outcome unknown"), r.errorMessage);
+        assertTrue(r.errorMessage.contains("/history"), r.errorMessage);
+    }
+
+    @Test
+    void BankWithdrawUnknownOutcomeIsReportedAsSuccessWithNote()
+    {
+        when(bankService.isBankingEnabled()).thenReturn(true);
+        when(bankService.bankExists(BANK_NAME)).thenReturn(true);
+        when(bankService.getBankBalance(BANK_NAME)).thenReturn(100.0, 50.0);
+        when(bankService.withdrawOutcome(BANK_NAME, 50.0)).thenReturn(TransferOutcome.UNKNOWN);
+
+        EconomyResponse r = connector.bankWithdraw(BANK_NAME, 50.0);
+        assertEquals(SUCCESS, r.type);
+        assertTrue(r.errorMessage.contains("outcome unknown"), r.errorMessage);
+    }
+
+    @Test
+    void CreateBankWhileWalletSetupPendingSaysSo()
+    {
+        OfflinePlayer owner = mock(OfflinePlayer.class);
+        when(owner.getUniqueId()).thenReturn(UUID.fromString(OWNER_UUID));
+        when(bankService.isBankingEnabled()).thenReturn(true);
+        when(bankService.createBank(eq(BANK_NAME), anyString())).thenReturn(null);
+        when(bankService.isWalletSetupPending()).thenReturn(true);
+
+        EconomyResponse r = connector.createBank(BANK_NAME, owner);
+        assertEquals(FAILURE, r.type);
+        assertTrue(r.errorMessage.contains("in progress"), r.errorMessage);
     }
 
     // -------------------------------------------------------------------------

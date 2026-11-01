@@ -83,4 +83,52 @@ class VaultConnectorPlayerTest
         assertEquals(6.0, r.balance);
         verify(economyFuncs, times(1)).getBalance(player);
     }
+
+    @Test
+    void WithdrawUnknownOutcomeIsSuccessWithNote_neverFailure()
+    {
+        when(economyFuncs.getBalance(player)).thenReturn(10.0);
+        when(economyFuncs.removeBalanceFPOutcome(player, 4.0)).thenReturn(TransferOutcome.UNKNOWN);
+
+        EconomyResponse r = connector.withdrawPlayer(player, 4.0);
+        assertEquals(SUCCESS, r.type);
+        assertEquals(6.0, r.balance);
+        assertTrue(r.errorMessage.contains("outcome unknown"), r.errorMessage);
+        assertTrue(r.errorMessage.contains("/history"), r.errorMessage);
+    }
+
+    @Test
+    void WithdrawFailureStillReportsFailure()
+    {
+        when(economyFuncs.getBalance(player)).thenReturn(10.0);
+        when(economyFuncs.removeBalanceFPOutcome(player, 4.0)).thenReturn(TransferOutcome.FAILED);
+
+        EconomyResponse r = connector.withdrawPlayer(player, 4.0);
+        assertEquals(FAILURE, r.type);
+        assertEquals(10.0, r.balance);
+        assertEquals("Withdrawal failed.", r.errorMessage);
+    }
+
+    @Test
+    void DepositUnknownOutcomeIsSuccessWithNote_neverFailure()
+    {
+        when(economyFuncs.addBalanceTPOutcome(player, 4.0)).thenReturn(TransferOutcome.UNKNOWN);
+        when(economyFuncs.getBalance(player)).thenReturn(10.0);
+
+        EconomyResponse r = connector.depositPlayer(player, 4.0);
+        assertEquals(SUCCESS, r.type);
+        assertTrue(r.errorMessage.contains("outcome unknown"), r.errorMessage);
+    }
+
+    @Test
+    void DepositSuccessHasNoMessage_andFailureStillFails()
+    {
+        when(economyFuncs.getBalance(player)).thenReturn(10.0);
+        when(economyFuncs.addBalanceTPOutcome(player, 4.0)).thenReturn(TransferOutcome.OK);
+        assertEquals(SUCCESS, connector.depositPlayer(player, 4.0).type);
+        assertNull(connector.depositPlayer(player, 4.0).errorMessage);
+
+        when(economyFuncs.addBalanceTPOutcome(player, 5.0)).thenReturn(TransferOutcome.FAILED);
+        assertEquals(FAILURE, connector.depositPlayer(player, 5.0).type);
+    }
 }
