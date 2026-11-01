@@ -240,6 +240,13 @@
             <version>5.11.2</version>
             <scope>test</scope>
         </dependency>
+        <!-- Test oracle only: cross-checks wallet.crypto's BLAKE2b and Ed25519 arithmetic. -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.78.1</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.mockbukkit.mockbukkit</groupId>
             <artifactId>mockbukkit-v1.21</artifactId>

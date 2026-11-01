@@ -61,12 +61,11 @@ public final class CpuWorkGenerator implements WorkGenerator
     public CompletableFuture<Long> generate(byte[] root32, long threshold)
     {
         CompletableFuture<Long> result = new CompletableFuture<>();
-        WorkHasher hasher;
         byte[] root;
         try
         {
             root = root32.clone();
-            hasher = new WorkHasher(root);
+            NanoKeys.requireLength(root, 32, "work root");
         }
         catch (RuntimeException e)
         {
@@ -89,7 +88,7 @@ public final class CpuWorkGenerator implements WorkGenerator
                 {
                     start = random.nextLong();
                 }
-                executor.execute(() -> search(hasher, root, threshold, start, result));
+                executor.execute(() -> search(root, threshold, start, result));
             }
         }
         catch (RejectedExecutionException e)
@@ -99,9 +98,13 @@ public final class CpuWorkGenerator implements WorkGenerator
         return result;
     }
 
-    private static void search(WorkHasher hasher, byte[] root, long threshold, long start,
-                               CompletableFuture<Long> result)
+    private static void search(byte[] root, long threshold, long start, CompletableFuture<Long> result)
     {
+        if (result.isDone())
+        {
+            return;
+        }
+        WorkHasher hasher = new WorkHasher(root);
         long nonce = start;
         Thread self = Thread.currentThread();
         while (!result.isDone() && !self.isInterrupted())
