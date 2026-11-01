@@ -1,5 +1,7 @@
 package banano.bananominecraft.bananoeconomy.configuration;
 
+import banano.bananominecraft.bananoeconomy.wallet.WalletSigner;
+import banano.bananominecraft.bananoeconomy.wallet.crypto.NanoKeys;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
@@ -550,15 +552,18 @@ class ConfigEngineTest
     @Test
     void WalletSeedExistingBackupFileIsNotOverwritten() throws Exception
     {
+        // An existing backup means this server already had a seed: config.yml lost it, so nothing
+        // may be regenerated (that would silently switch wallets) and the backup must survive.
         File existing = new File(tempDir, "seed-backup.txt");
         Files.writeString(existing.toPath(), "OLD BACKUP");
 
-        new ConfigEngine(plugin);
+        ConfigEngine engine = new ConfigEngine(plugin);
 
         assertEquals("OLD BACKUP", Files.readString(existing.toPath()));
+        assertEquals("", engine.getWalletSeed());
         File[] others = tempDir.listFiles((dir, name) -> name.startsWith("seed-backup-") && name.endsWith(".txt"));
         assertNotNull(others);
-        assertEquals(1, others.length, "The new seed must be backed up to a separate file");
+        assertEquals(0, others.length, "No new seed, so no new backup file");
     }
 
     @Test
@@ -609,6 +614,153 @@ class ConfigEngineTest
         assertTrue(logs.stream().noneMatch(r -> r.getMessage() != null && r.getMessage().contains("hunter2")));
         assertTrue(logs.stream().anyMatch(r -> r.getMessage() != null
                 && r.getMessage().contains("http://***@node:7072")));
+    }
+
+    // -------------------------------------------------------------------------
+    // Light-wallet mode keys
+    // -------------------------------------------------------------------------
+
+    /** A checksum-valid ban_ address (index {@code n} of the all-zero seed). */
+    private static String validAddress(int n)
+    {
+        return NanoKeys.address(NanoKeys.publicKey(NanoKeys.privateKey(new byte[32], n)), "ban_");
+    }
+
+    @Test
+    void walletMode_defaultsToNode_withDefaultLightSettings()
+    {
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals("node", engine.getWalletMode());
+        assertFalse(engine.isLightMode());
+        assertEquals(2, engine.getWorkThreads());
+        assertEquals(10_000, engine.getWalletIndexScanLimit());
+        assertEquals("", engine.getDefaultRepresentative());
+    }
+
+    @Test
+    void walletMode_light_isReadCaseInsensitively()
+    {
+        when(config.getString("walletMode", "node")).thenReturn("  LIGHT ");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals("light", engine.getWalletMode());
+        assertTrue(engine.isLightMode());
+    }
+
+    @Test
+    void walletMode_unknownValue_fallsBackToNode()
+    {
+        when(config.getString("walletMode", "node")).thenReturn("hybrid");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals("node", engine.getWalletMode());
+    }
+
+    @Test
+    void lightMode_reportsLightWalletMarkersInsteadOfNodeWalletIds_andNeverSavesThem()
+    {
+        when(config.getString("walletMode", "node")).thenReturn("light");
+        when(config.getString("walletID", "")).thenReturn("REAL-NODE-WALLET-ID");
+        when(config.getString("bankWalletID", "")).thenReturn("REAL-NODE-BANK-ID");
+        when(config.getString("bankWalletSeed", ""))
+                .thenReturn("AABBCCDD00112233AABBCCDD00112233AABBCCDD00112233AABBCCDD00112233");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals(WalletSigner.LIGHT_PLAYER_WALLET_ID, engine.getWalletId());
+        assertEquals(WalletSigner.LIGHT_BANK_WALLET_ID, engine.getBankWalletId());
+
+        engine.save();
+
+        // The node IDs in config.yml must survive for a later switch back to node mode.
+        verify(config, never()).set(eq("walletID"), any());
+        verify(config, never()).set(eq("bankWalletID"), any());
+    }
+
+    @Test
+    void lightMode_withoutBankSeed_hasNoBankWalletMarker()
+    {
+        when(config.getString("walletMode", "node")).thenReturn("light");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+
+        assertEquals("", engine.getBankWalletId());
+    }
+
+    @Test
+    void nodeMode_keepsNodeWalletIds_andSavesThem()
+    {
+        when(config.getString("walletID", "")).thenReturn("REAL-NODE-WALLET-ID");
+
+        ConfigEngine engine = new ConfigEngine(plugin);
+        assertEquals("REAL-NODE-WALLET-ID", engine.getWalletId());
+
+        engine.save();
+        verify(config).set("walletID", "REAL-NODE-WALLET-ID");
+    }
+
+    @Test
+    void workThreads_readFromConfig_andRejectOutOfRange()
+    {
+        when(config.getInt("workThreads", 2)).thenReturn(4);
+        assertEquals(4, new ConfigEngine(plugin).getWorkThreads());
+
+        when(config.getInt("workThreads", 2)).thenReturn(0);
+        assertEquals(2, new ConfigEngine(plugin).getWorkThreads());
+
+        when(config.getInt("workThreads", 2)).thenReturn(10_000);
+        assertEquals(2, new ConfigEngine(plugin).getWorkThreads());
+    }
+
+    @Test
+    void walletIndexScanLimit_readFromConfig_andRejectOutOfRange()
+    {
+        when(config.getInt("walletIndexScanLimit", 10_000)).thenReturn(250);
+        assertEquals(250, new ConfigEngine(plugin).getWalletIndexScanLimit());
+
+        when(config.getInt("walletIndexScanLimit", 10_000)).thenReturn(0);
+        assertEquals(0, new ConfigEngine(plugin).getWalletIndexScanLimit());
+
+        when(config.getInt("walletIndexScanLimit", 10_000)).thenReturn(-5);
+        assertEquals(10_000, new ConfigEngine(plugin).getWalletIndexScanLimit());
+    }
+
+    @Test
+    void defaultRepresentative_usesConfiguredValue_whenValid()
+    {
+        String rep = validAddress(11);
+        when(config.getString("defaultRepresentative", "")).thenReturn(rep);
+        when(config.getStringList("representatives")).thenReturn(List.of(validAddress(12)));
+
+        assertEquals(rep, new ConfigEngine(plugin).getDefaultRepresentative());
+    }
+
+    @Test
+    void defaultRepresentative_fallsBackToFirstRepresentativesEntry()
+    {
+        String first = validAddress(21);
+        when(config.getStringList("representatives")).thenReturn(List.of(first, validAddress(22)));
+
+        assertEquals(first, new ConfigEngine(plugin).getDefaultRepresentative());
+    }
+
+    @Test
+    void defaultRepresentative_invalidValueIsIgnored_andFallsBack()
+    {
+        String first = validAddress(31);
+        when(config.getString("defaultRepresentative", "")).thenReturn("ban_notanaddress");
+        when(config.getStringList("representatives")).thenReturn(List.of(first));
+
+        assertEquals(first, new ConfigEngine(plugin).getDefaultRepresentative());
+    }
+
+    @Test
+    void defaultRepresentative_emptyWhenNothingConfigured()
+    {
+        assertEquals("", new ConfigEngine(plugin).getDefaultRepresentative());
     }
 
     @Test

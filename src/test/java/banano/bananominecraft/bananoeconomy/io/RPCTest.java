@@ -4,6 +4,9 @@ import banano.bananominecraft.bananoeconomy.classes.TransactionRecord;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.enums.TransactionDirection;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
+import banano.bananominecraft.bananoeconomy.wallet.NodeWalletSigner;
+import banano.bananominecraft.bananoeconomy.wallet.WalletSigner;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +16,7 @@ import org.mockito.quality.Strictness;
 import org.mockito.MockitoAnnotations;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.List;
 import java.util.logging.Logger;
 
@@ -809,5 +813,203 @@ class RPCTest
         stubResponse("{\"wallet\":\"BANK_WALLET_ID\"}");
         assertTrue(rpc.bankWalletCreate());
         verify(configEngine).setBankWalletId("BANK_WALLET_ID");
+    }
+
+    // -------------------------------------------------------------------------
+    // Wallet actions are delegated to the injected WalletSigner
+    // -------------------------------------------------------------------------
+
+    @Test
+    void defaultConstructor_usesTheNodeWalletSigner()
+    {
+        assertInstanceOf(NodeWalletSigner.class, rpc.getSigner());
+    }
+
+    private RPC rpcWith(WalletSigner signer)
+    {
+        return new RPC(plugin, configEngine, http, signer);
+    }
+
+    @Test
+    void sendTransaction_delegatesToSigner_withRawAmountWalletAndSendId() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.send(anyString(), anyString(), anyString(), any(BigInteger.class), anyString()))
+                .thenReturn("HASH");
+
+        String hash = rpcWith(signer).sendTransaction(SENDER, RECIPIENT, 1.5, "W-ID", "SEND-ID");
+
+        assertEquals("HASH", hash);
+        verify(signer).send("W-ID", SENDER, RECIPIENT, new BigInteger("150000000000000000000000000000"), "SEND-ID");
+        verifyNoInteractions(http);
+    }
+
+    @Test
+    void sendTransaction_defaultWalletId_comesFromConfig() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.send(anyString(), anyString(), anyString(), any(BigInteger.class), anyString()))
+                .thenReturn("HASH");
+
+        rpcWith(signer).sendTransaction(SENDER, RECIPIENT, 1.0);
+
+        verify(signer).send(eq("WALLET_ID"), eq(SENDER), eq(RECIPIENT), eq(new BigInteger(ONE_BAN_RAW)), anyString());
+    }
+
+    @Test
+    void sendTransaction_validatesBeforeCallingSigner() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        RPC delegating = rpcWith(signer);
+
+        assertThrows(TransactionError.class, () -> delegating.sendTransaction(SENDER, RECIPIENT, 0.0));
+        assertThrows(TransactionError.class, () -> delegating.sendTransaction(SENDER, RECIPIENT, Double.NaN));
+        assertThrows(TransactionError.class, () -> delegating.sendTransaction("nope", RECIPIENT, 1.0));
+        assertThrows(TransactionError.class, () -> delegating.sendTransaction(SENDER, RECIPIENT, 1e-40));
+        verifyNoInteractions(signer);
+    }
+
+    @Test
+    void sendTransaction_propagatesSignerErrors_includingUnknownOutcome() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.send(anyString(), anyString(), anyString(), any(BigInteger.class), anyString()))
+                .thenThrow(new UnknownOutcomeError());
+
+        TransactionError thrown = assertThrows(TransactionError.class,
+                () -> rpcWith(signer).sendTransaction(SENDER, RECIPIENT, 1.0));
+
+        assertInstanceOf(UnknownOutcomeError.class, thrown);
+        assertTrue(thrown.getUserError().toLowerCase().contains("unknown"));
+    }
+
+    @Test
+    void receiveBlock_delegatesToSigner() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.receive("W-ID", SENDER, "BLOCK")).thenReturn("RECEIVE-HASH");
+
+        assertEquals("RECEIVE-HASH", rpcWith(signer).receiveBlock("W-ID", SENDER, "BLOCK"));
+        verifyNoInteractions(http);
+    }
+
+    @Test
+    void receiveBlock_twoArgOverload_usesConfiguredWalletId_viaSigner() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.receive("WALLET_ID", SENDER, "BLOCK")).thenReturn("RECEIVE-HASH");
+
+        assertEquals("RECEIVE-HASH", rpcWith(signer).receiveBlock(SENDER, "BLOCK"));
+    }
+
+    @Test
+    void receiveBlock_validatesAccountBeforeCallingSigner()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+
+        assertThrows(TransactionError.class, () -> rpcWith(signer).receiveBlock("W-ID", "nope", "BLOCK"));
+        verifyNoInteractions(signer);
+    }
+
+    @Test
+    void setRepresentative_delegatesToSigner() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.setRepresentative("W-ID", SENDER, RECIPIENT)).thenReturn("CHANGE-HASH");
+
+        assertEquals("CHANGE-HASH", rpcWith(signer).setRepresentative(SENDER, RECIPIENT, "W-ID"));
+    }
+
+    @Test
+    void setRepresentative_validatesBeforeCallingSigner()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+
+        assertThrows(TransactionError.class, () -> rpcWith(signer).setRepresentative(SENDER, "nope", "W-ID"));
+        verifyNoInteractions(signer);
+    }
+
+    @Test
+    void accountCreate_delegatesToSigner_andMapsNullToSentinel()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.accountCreate("WALLET_ID", 7)).thenReturn(RECIPIENT);
+        when(signer.accountCreate("BANK_ID", 3)).thenReturn(null);
+        RPC delegating = rpcWith(signer);
+
+        assertEquals(RECIPIENT, delegating.accountCreate(7));
+        assertEquals(RPC.ACCOUNT_CREATION_FAILED, delegating.accountCreate(3, "BANK_ID"));
+        verifyNoInteractions(http);
+    }
+
+    @Test
+    void walletStatus_mapsSignerStatus_forPlayerAndBankWallets()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.walletStatus(WalletSigner.Wallet.PLAYER)).thenReturn(WalletSigner.Status.EXISTS);
+        when(signer.walletStatus(WalletSigner.Wallet.BANK)).thenReturn(WalletSigner.Status.MISSING);
+        RPC delegating = rpcWith(signer);
+
+        assertEquals(RPC.WalletStatus.EXISTS, delegating.walletStatus());
+        assertTrue(delegating.wallet_exists());
+        assertEquals(RPC.WalletStatus.MISSING, delegating.bankWalletStatus());
+        assertFalse(delegating.bankWalletExists());
+
+        when(signer.walletStatus(WalletSigner.Wallet.PLAYER)).thenReturn(WalletSigner.Status.UNREACHABLE);
+        assertEquals(RPC.WalletStatus.UNREACHABLE, delegating.walletStatus());
+    }
+
+    @Test
+    void walletCreate_nodeSigner_persistsReturnedWalletId()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.isLocal()).thenReturn(false);
+        when(signer.createWallet(WalletSigner.Wallet.PLAYER)).thenReturn("NODE-ID");
+        when(configEngine.save()).thenReturn(true);
+
+        assertTrue(rpcWith(signer).walletCreate());
+        verify(configEngine).setWalletId("NODE-ID");
+        verify(configEngine).save();
+    }
+
+    @Test
+    void walletCreate_localSigner_isANoOpThatSucceeds_andStoresNothing()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.isLocal()).thenReturn(true);
+        when(signer.createWallet(WalletSigner.Wallet.PLAYER)).thenReturn(WalletSigner.LIGHT_PLAYER_WALLET_ID);
+        when(signer.createWallet(WalletSigner.Wallet.BANK)).thenReturn(WalletSigner.LIGHT_BANK_WALLET_ID);
+        RPC light = rpcWith(signer);
+
+        assertTrue(light.walletCreate());
+        assertTrue(light.bankWalletCreate());
+
+        verify(configEngine, never()).setWalletId(anyString());
+        verify(configEngine, never()).setBankWalletId(anyString());
+        verify(configEngine, never()).save();
+        verifyNoInteractions(http); // the seed (or anything else) is never sent over the network
+    }
+
+    @Test
+    void walletCreate_returnsFalse_whenSignerFails()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        when(signer.createWallet(any())).thenReturn(null);
+
+        assertFalse(rpcWith(signer).walletCreate());
+        assertFalse(rpcWith(signer).bankWalletCreate());
+        verify(configEngine, never()).save();
+    }
+
+    @Test
+    void readOnlyCalls_stillUseTheNodeTransport_andNeverTheSigner() throws Exception
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        stubResponse("{\"balance\":\"" + ONE_BAN_RAW + "\"}");
+
+        assertEquals(1.0, rpcWith(signer).getBalance(SENDER));
+
+        verify(http).post(anyString(), anyString());
+        verifyNoInteractions(signer);
     }
 }

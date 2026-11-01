@@ -542,4 +542,187 @@ class JsonDBConnectorTest
         assertFalse(db.updatePlayerWallet(player, "ban_new"));
         assertFalse(playerFile(player).exists());
     }
+
+    // -------------------------------------------------------------------------
+    // walletIndex (seed-derivation index) — players
+    // -------------------------------------------------------------------------
+
+    private void writeLegacyPlayerFile(PlayerMock p, String wallet) throws IOException
+    {
+        // Exactly what a pre-walletIndex version wrote: no walletIndex key at all.
+        Files.writeString(playerFile(p).toPath(),
+                "{\"playerUUID\":\"" + p.getUniqueId() + "\",\"playerName\":\"" + p.getName()
+                        + "\",\"wallet\":\"" + wallet + "\",\"isFrozen\":false}",
+                StandardCharsets.UTF_8);
+    }
+
+    @Test
+    void walletIndex_roundTripsThroughDisk()
+    {
+        PlayerRecord created = db.createPlayerRecord(player, "ban_wallet", 5);
+
+        assertEquals(5, created.getWalletIndex());
+        assertEquals(5, db.getPlayerWalletIndex("ban_wallet"));
+        assertEquals(5, db.getMaxPlayerWalletIndex());
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals(5, reopened.getPlayerRecord(player).getWalletIndex());
+        assertEquals(5, reopened.getPlayerWalletIndex("ban_wallet"));
+        assertEquals(5, reopened.getMaxPlayerWalletIndex());
+        reopened.close();
+    }
+
+    @Test
+    void createPlayerRecord_withoutIndex_hasNullIndex_andZeroMax()
+    {
+        PlayerRecord created = db.createPlayerRecord(player, "ban_wallet");
+
+        assertNull(created.getWalletIndex());
+        assertNull(db.getPlayerWalletIndex("ban_wallet"));
+        assertEquals(0, db.getMaxPlayerWalletIndex());
+    }
+
+    @Test
+    void legacyFileWithoutWalletIndex_loadsWithNullIndex() throws IOException
+    {
+        writeLegacyPlayerFile(player, "ban_legacy");
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        PlayerRecord record = reopened.getPlayerRecord(player);
+
+        assertNotNull(record);
+        assertEquals("ban_legacy", record.getWallet());
+        assertNull(record.getWalletIndex());
+        assertEquals(0, reopened.getMaxPlayerWalletIndex());
+        reopened.close();
+    }
+
+    @Test
+    void getPlayerRecordsMissingWalletIndex_listsOnlyRecordsWithoutIndex() throws IOException
+    {
+        PlayerMock legacy = server.addPlayer("Legacy");
+        writeLegacyPlayerFile(legacy, "ban_legacy");
+        db.createPlayerRecord(player, "ban_new", 3);
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        List<PlayerRecord> missing = reopened.getPlayerRecordsMissingWalletIndex();
+
+        assertEquals(1, missing.size());
+        assertEquals("ban_legacy", missing.get(0).getWallet());
+        assertEquals(legacy.getUniqueId().toString(), missing.get(0).getPlayerUUID());
+        reopened.close();
+    }
+
+    @Test
+    void setPlayerWalletIndex_persistsForOfflineRecord() throws IOException
+    {
+        writeLegacyPlayerFile(player, "ban_legacy");
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+
+        assertTrue(reopened.setPlayerWalletIndex(player.getUniqueId().toString(), 12));
+
+        assertEquals(12, reopened.getPlayerWalletIndex("ban_legacy"));
+        assertEquals(12, reopened.getMaxPlayerWalletIndex());
+        assertTrue(reopened.getPlayerRecordsMissingWalletIndex().isEmpty());
+        reopened.close();
+
+        JsonDBConnector again = new JsonDBConnector(plugin);
+        assertEquals(12, again.getPlayerRecord(player).getWalletIndex());
+        // The rest of the record is untouched.
+        assertEquals("ban_legacy", again.getPlayerRecord(player).getWallet());
+        assertEquals("Alice", again.getPlayerRecord(player).getPlayerName());
+        again.close();
+    }
+
+    @Test
+    void setPlayerWalletIndex_updatesTheCachedRecordOfAnOnlinePlayer()
+    {
+        PlayerRecord cached = db.createPlayerRecord(player, "ban_wallet");
+
+        assertTrue(db.setPlayerWalletIndex(player.getUniqueId().toString(), 9));
+
+        assertEquals(9, cached.getWalletIndex());
+        assertEquals(9, db.getPlayerRecord(player).getWalletIndex());
+    }
+
+    @Test
+    void setPlayerWalletIndex_returnsFalse_forUnknownPlayerOrBadUuid()
+    {
+        assertFalse(db.setPlayerWalletIndex(java.util.UUID.randomUUID().toString(), 3));
+        assertFalse(db.setPlayerWalletIndex("not-a-uuid", 3));
+        assertNull(db.getPlayerWalletIndex("ban_nothing"));
+    }
+
+    @Test
+    void getMaxPlayerWalletIndex_isHighestAcrossAllPlayers_includingOffline()
+    {
+        PlayerMock bob = server.addPlayer("Bob");
+        db.createPlayerRecord(player, "ban_a", 4);
+        db.createPlayerRecord(bob, "ban_b", 17);
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals(17, reopened.getMaxPlayerWalletIndex());
+        reopened.close();
+    }
+
+    @Test
+    void updatePlayerWallet_withIndex_storesNewIndexAndDropsTheOldWalletFromTheIndexMap()
+    {
+        db.createPlayerRecord(player, "ban_old", 2);
+
+        assertTrue(db.updatePlayerWallet(player, "ban_new", 8));
+
+        assertEquals(8, db.getPlayerRecord(player).getWalletIndex());
+        assertEquals(8, db.getPlayerWalletIndex("ban_new"));
+        assertNull(db.getPlayerWalletIndex("ban_old"));
+        assertEquals(8, db.getMaxPlayerWalletIndex());
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals(8, reopened.getPlayerRecord(player).getWalletIndex());
+        assertEquals(8, reopened.getPlayerWalletIndex("ban_new"));
+        reopened.close();
+    }
+
+    // -------------------------------------------------------------------------
+    // walletIndex — banks
+    // -------------------------------------------------------------------------
+
+    @Test
+    void bankWalletIndex_roundTripsThroughDisk()
+    {
+        assertTrue(db.createBankRecord(new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 1L, 3)));
+
+        assertEquals(3, db.getBankRecord(BANK_NAME).getWalletIndex());
+        assertEquals(3, db.getBankWalletIndex(BANK_ADDR));
+        assertEquals(3, db.getMaxBankWalletIndex());
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertEquals(3, reopened.getBankRecord(BANK_NAME).getWalletIndex());
+        assertEquals(3, reopened.getMaxBankWalletIndex());
+        reopened.close();
+    }
+
+    @Test
+    void legacyBanksFileWithoutWalletIndex_loadsWithNullIndex_thenBackfillPersists() throws IOException
+    {
+        Files.writeString(new File(dataDir(), "banks.json").toPath(),
+                "[{\"bankName\":\"" + BANK_NAME + "\",\"address\":\"" + BANK_ADDR + "\",\"ownerUuid\":\""
+                        + OWNER_UUID + "\",\"createdAt\":1000000}]",
+                StandardCharsets.UTF_8);
+
+        JsonDBConnector reopened = new JsonDBConnector(plugin);
+        assertNull(reopened.getBankRecord(BANK_NAME).getWalletIndex());
+        assertNull(reopened.getBankWalletIndex(BANK_ADDR));
+        assertEquals(0, reopened.getMaxBankWalletIndex());
+
+        assertTrue(reopened.setBankWalletIndex(BANK_NAME, 6));
+        assertEquals(6, reopened.getBankRecord(BANK_NAME).getWalletIndex());
+        assertFalse(reopened.setBankWalletIndex("no-such-bank", 1));
+        reopened.close();
+
+        JsonDBConnector again = new JsonDBConnector(plugin);
+        assertEquals(6, again.getBankRecord(BANK_NAME).getWalletIndex());
+        assertEquals(6, again.getMaxBankWalletIndex());
+        again.close();
+    }
 }

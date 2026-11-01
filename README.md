@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS bank_members (
 ## Configuration steps:
 
 * In the new BananoEconomy folder (created by the previous step) open `config.yml`  
-* Add your node IP *with* protocol (e.g.: http://127.0.0.1:7072)
+* Add your node IP *with* protocol (e.g.: http://127.0.0.1:7072). To run without your own node, see
+  **Light wallet mode** below.
 * Add your wallet seed (generated in **Master Wallet Setup** step)
 * Add your MongoDB URI (from **Database Setup** step)  
 * Ignore the rest unless you know what you are doing. Empty fields will be auto filled.
@@ -116,6 +117,84 @@ A new seed is only generated on a fresh install where both are unset. The genera
 written to `seed-backup.txt` (readable only by the server's OS user) — copy it somewhere safe
 offline and delete the file. Keep `secret.key` together with `config.yml` in your backups: the
 seed in `config.yml` is encrypted with it.
+
+## Light wallet mode (no node required)
+
+By default (`walletMode: node`) BananoCraft imports your wallet seed into **your own** Banano node and
+asks the node to sign every transaction. With `walletMode: light` no node wallet is involved at all:
+
+* **How it works.** The plugin derives the account keys from your seed on the Minecraft server, builds
+  and signs each block there, generates the proof-of-work there (CPU, low priority, never on the
+  server's main thread), and only publishes the finished, signed block with the standard `process`
+  RPC. Balances, history, receivable blocks and representatives are read with ordinary read-only RPC calls.
+* **The seed never leaves the server.** Nothing in light mode ever sends the seed (or any private key)
+  over the network. `IP` can therefore be **any** Banano RPC endpoint, including a public one: it only
+  ever sees public information and signed blocks. It does not need `enable_control`, and the plugin
+  never calls `wallet_create` in light mode. Pick an endpoint that allows `account_info`, `receivable`,
+  `account_history`, `representatives_online` and `process`.
+* **No balance cache.** Every send, receive and representative change reads the account's current state
+  (`account_info`) under a per-account lock immediately before building the block, and never builds two
+  blocks on the same frontier. If the network answer to `process` is lost, the plugin re-checks the
+  account: if the block landed it counts as success, if it did not it is re-sent once, and if the outcome
+  still cannot be established the player is told *"Transaction status unknown - check /history before
+  retrying"* (it is deliberately not reported as a plain failure, because the funds may have moved).
+
+### Config keys
+
+```yaml
+walletMode: light           # node (default) | light
+workThreads: 2              # light mode: CPU threads for proof-of-work (default 2)
+defaultRepresentative: ""   # light mode: representative for new accounts; falls back to the first
+                            # `representatives` entry, then to the master wallet itself
+walletIndexScanLimit: 10000 # both modes: highest index tried when matching old accounts (see below)
+IP: "https://your-rpc-endpoint"
+walletSeed: ...             # same seed, same encryption-at-rest as before
+```
+
+### Proof-of-work cost
+
+Every block needs a proof-of-work. Measured in the development container (Banano difficulty, plain
+CPU, one block each):
+
+| `workThreads` | average per block | worst case seen |
+|---|---|---|
+| 1 | 5.7 s | - |
+| 4 | 1.5 s | 3.2 s |
+
+A tip is **two** blocks: the sender's send and the recipient's receive, so expect several seconds of CPU
+work per tip (the recipient's receive happens in the background) and plan CPU accordingly (work is done by background daemon threads at minimum priority).
+To hide most of that latency the plugin **pre-computes work** for an account's next block right after each
+successful block; the cached work is thrown away if the account's frontier moves before it is used. A busy
+server should raise `workThreads` (up to the number of spare cores).
+
+### Account indices and the startup backfill
+
+Every player account is the seed's account at some index. From this version on, new accounts (in **both**
+modes) are created at an explicit index, `highest stored index + 1` (index 0 is the master wallet; the
+first player gets 1), allocated under a lock so two simultaneous joins can never share an index, and the
+index is stored with the player (`walletIndex`: a field in the JSON player file and the MongoDB document,
+and a nullable `walletIndex INT` column that is added automatically to the MySQL `users` and `banks`
+tables). Banks work the same way against the bank seed.
+
+Accounts created by older versions have no stored index. At startup (both modes, on a background thread)
+the plugin derives the addresses at indices `0..walletIndexScanLimit` from your seed(s), matches them to
+those accounts and stores the index. Anything it cannot match is listed in a single `SEVERE` log line. In
+light mode such an account **cannot send, receive or change representative** (the player gets a clear
+error, and is never silently given a new wallet) until it is matched; raise `walletIndexScanLimit` and
+restart. The scan runs in the background right after startup, so a legacy player who spends in the very
+first seconds after a restart may briefly get the same error.
+
+### Switching modes
+
+* **node to light:** set `walletMode: light` (and `IP` if you want a public RPC) and restart. Your seed,
+  master wallet and every player's address are unchanged, so no funds move. Leave `walletID` /
+  `bankWalletID` as they are; light mode ignores them and does not overwrite them. Check the log for the
+  backfill summary.
+* **light to node:** set `walletMode: node` and restart. The plugin uses the stored `walletID`; if the
+  node does not have that wallet it imports your seed into **your own** node as before (never over a
+  public plain-http connection).
+* If light mode starts without a usable seed (missing, undecryptable `ENC:` value, or not 64 hex
+  characters) it logs one `SEVERE` message and disables itself rather than touching any wallet.
 
 ## Troubleshooting
 

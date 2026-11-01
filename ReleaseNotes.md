@@ -2,6 +2,12 @@
 
 ## Unreleased ##
 
+- **Light wallet mode** (`walletMode: light`): no Banano node wallet is needed. Keys are derived, blocks built and signed, and proof-of-work generated on the Minecraft server (`workThreads`), then published with `process`, so `IP` may be a public RPC and the seed never leaves the server. Measured proof-of-work cost: 1 CPU thread ~5.7 s per block, 4 threads ~1.5 s (max 3.2 s); a tip is a send plus the recipient's receive; work for the next block is pre-computed. The default stays `walletMode: node`. See "Light wallet mode" in the README.
+- Wallet actions in `RPC` (seed import, account creation, send, receive, representative change) now go through a `WalletSigner` (`NodeWalletSigner` = the previous node-wallet code, `LightWalletSigner` = local signing). Public `RPC` methods are unchanged.
+- New config keys `walletMode`, `workThreads`, `defaultRepresentative`, `walletIndexScanLimit`.
+- New accounts (players and banks, both modes) are created at an explicit derivation index (highest stored + 1, allocated under a lock) which is stored as `walletIndex` (JSON, MongoDB, and an automatically added nullable `walletIndex` column on the MySQL `users` and `banks` tables). Existing records are matched to their index at startup (scan limit `walletIndexScanLimit`); unmatched records are logged at SEVERE and, in light mode, cannot spend.
+- An unknown transaction outcome in light mode is reported as "Transaction status unknown - check /history before retrying" rather than as a plain failure.
+
 - JSON storage: a missing player file no longer creates an empty file, and empty/corrupt player files are treated as "no record" instead of breaking joins.
 - JSON storage: all files are written atomically (temp file + rename) and writes to the same file are serialised, so a crash can no longer truncate data.
 - JSON storage: offline payments are saved on every change instead of only every 15 minutes; a corrupt offlinepayments.json is moved aside rather than overwritten.
