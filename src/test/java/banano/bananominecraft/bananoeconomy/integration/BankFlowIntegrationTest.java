@@ -40,9 +40,9 @@ import static org.mockito.Mockito.*;
 class BankFlowIntegrationTest
 {
     private static final String BANK_NAME      = "treasury";
-    private static final String BANK_ADDR      = "ban_3bankaddr111111111111111111111111111111111111111111111111111111";
-    private static final String BANK_ADDR_2    = "ban_3bankaddr222222222222222222222222222222222222222222222222222222";
-    private static final String MASTER_ADDR    = "ban_1masteraddr1111111111111111111111111111111111111111111111111111";
+    private static final String BANK_ADDR      = "ban_3bankaddr111111111111111111111111111111111111111111111111111";
+    private static final String BANK_ADDR_2    = "ban_3bankaddr333333333333333333333333333333333333333333333333333";
+    private static final String MASTER_ADDR    = "ban_1masteraddr1111111111111111111111111111111111111111111111111";
     private static final String BANK_WALLET_ID = "BANK-WALLET-ID";
     private static final String OWNER_UUID_STR = "00000000-0000-0000-0000-000000000001";
     private static final UUID   OWNER_UUID     = UUID.fromString(OWNER_UUID_STR);
