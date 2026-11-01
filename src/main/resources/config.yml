@@ -9,8 +9,11 @@
 # the seed stay the same, so no funds move.
 walletMode: node
 
-# Light mode only: CPU threads for local proof-of-work (1 thread ~5.7 s per block, 4 threads ~1.5 s
-# on a typical server CPU; each tip is a send plus the recipient's receive). Default 2.
+# Light mode only: CPU threads for local proof-of-work (measured: 1 thread ~3.7 s per block on average,
+# 2 threads ~1.7 s average / ~6 s worst case; each tip is a send plus the recipient's receive). Default 2.
+# Vault calls from other plugins are synchronous, so a payment can block the main thread for this long
+# when no pre-computed work is ready: use 2 or more threads, and node mode for heavy Vault shop traffic.
+# Light mode supports exactly ONE server per wallet seed.
 workThreads: 2
 
 # Light mode only: representative given to new accounts. Falls back to the first entry of

@@ -85,8 +85,8 @@ public final class TipService
 
         // Best-effort: the tip has already been sent regardless of whether this succeeds.
         // If it fails, the block is left pending and will still be picked up later by the
-        // node's own auto-receive (node mode), receive-on-join or the confirmation websocket
-        // (light mode), or a manual /receive.
+        // node's own auto-receive (node mode), receive-on-join (light mode, which has no node
+        // auto-receive), or a manual /receive.
         try
         {
             rpc.receiveBlock(recipientWallet, blockHash);

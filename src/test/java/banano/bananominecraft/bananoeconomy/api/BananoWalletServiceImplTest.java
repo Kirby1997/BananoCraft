@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy.api;
 
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
@@ -246,5 +247,57 @@ class BananoWalletServiceImplTest
 
         assertFalse(result.success());
         verifyNoInteractions(representativeService);
+    }
+
+    @Test
+    void send_unknownOutcome_isReportedAsSuccessWithUnknownFlag_notAsFailure() throws TransactionError
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(activeRecord());
+        when(rpc.sendTransaction(WALLET, DEST, 1.5)).thenThrow(new UnknownOutcomeError());
+
+        BananoWalletService.SendResult result = service.send(PLAYER_ID, DEST, 1.5);
+
+        assertTrue(result.success());
+        assertTrue(result.unknown());
+        assertNull(result.blockHash());
+        assertTrue(result.userError().contains("outcome unknown"), result.userError());
+        assertTrue(result.userError().contains("/history"), result.userError());
+    }
+
+    @Test
+    void send_plainTransactionError_isStillAFailure_withUnknownFalse() throws TransactionError
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(activeRecord());
+        when(rpc.sendTransaction(WALLET, DEST, 1.5)).thenThrow(new TransactionError("Insufficient balance"));
+
+        BananoWalletService.SendResult result = service.send(PLAYER_ID, DEST, 1.5);
+
+        assertFalse(result.success());
+        assertFalse(result.unknown());
+        assertEquals("Insufficient balance", result.userError());
+    }
+
+    @Test
+    void send_success_hasUnknownFalse() throws TransactionError
+    {
+        when(db.getPlayerRecord(PLAYER_ID)).thenReturn(activeRecord());
+        when(rpc.sendTransaction(WALLET, DEST, 1.5)).thenReturn("HASH");
+
+        BananoWalletService.SendResult result = service.send(PLAYER_ID, DEST, 1.5);
+
+        assertTrue(result.success());
+        assertFalse(result.unknown());
+        assertEquals("HASH", result.blockHash());
+    }
+
+    @Test
+    void sendResult_keepsTheThreeArgumentConstructorAndFactories()
+    {
+        BananoWalletService.SendResult legacy = new BananoWalletService.SendResult(true, "H", null);
+        assertFalse(legacy.unknown());
+        assertFalse(BananoWalletService.SendResult.succeeded("H").unknown());
+        assertFalse(BananoWalletService.SendResult.failed("x").unknown());
+        assertTrue(BananoWalletService.SendResult.unknownOutcome("n").unknown());
+        assertTrue(BananoWalletService.SendResult.unknownOutcome("n").success());
     }
 }

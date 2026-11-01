@@ -1,5 +1,6 @@
 package banano.bananominecraft.bananoeconomy.services;
 
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.classes.OfflinePaymentRecord;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
@@ -99,6 +100,55 @@ class TipServiceTest
         assertEquals(TipService.TransferResult.Status.FAILED, result.status());
         assertEquals("Insufficient balance", result.userError());
         assertNull(result.blockHash());
+        verify(db, never()).saveOfflinePayment(any());
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+    }
+
+    @Test
+    void unknownOutcome_offlineRecipient_isReportedAsStatusUnknown_andStillGetsAMarkedRecord() throws TransactionError
+    {
+        when(rpc.sendTransaction(SENDER, RECIPIENT, 2.0)).thenThrow(new UnknownOutcomeError());
+
+        TipService.TransferResult result = service.transfer(
+                SENDER, RECIPIENT, recipientUuid, 2.0, "gg", "Alice", false);
+
+        assertEquals(TipService.TransferResult.Status.FAILED, result.status());
+        assertEquals(UnknownOutcomeError.USER_MESSAGE, result.userError());
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+
+        ArgumentCaptor<OfflinePaymentRecord> captor = ArgumentCaptor.forClass(OfflinePaymentRecord.class);
+        verify(db).saveOfflinePayment(captor.capture());
+        OfflinePaymentRecord saved = captor.getValue();
+        assertEquals(recipientUuid, saved.targetPlayerUUID());
+        assertEquals("Alice", saved.fromPlayerName());
+        assertEquals(2.0, saved.paymentAmount());
+        assertTrue(saved.message().startsWith(TipService.UNKNOWN_RECIPIENT_NOTE), saved.message());
+        assertTrue(saved.message().contains("outcome unknown"), saved.message());
+        assertTrue(saved.message().endsWith("gg"), saved.message());
+    }
+
+    @Test
+    void unknownOutcome_offlineRecipient_withoutMessage_stillMarked() throws TransactionError
+    {
+        when(rpc.sendTransaction(SENDER, RECIPIENT, 2.0)).thenThrow(new UnknownOutcomeError());
+
+        service.transfer(SENDER, RECIPIENT, recipientUuid, 2.0, "", "Alice", false);
+
+        ArgumentCaptor<OfflinePaymentRecord> captor = ArgumentCaptor.forClass(OfflinePaymentRecord.class);
+        verify(db).saveOfflinePayment(captor.capture());
+        assertEquals(TipService.UNKNOWN_RECIPIENT_NOTE, captor.getValue().message());
+    }
+
+    @Test
+    void unknownOutcome_onlineRecipient_isStatusUnknown_noRecordSaved() throws TransactionError
+    {
+        when(rpc.sendTransaction(SENDER, RECIPIENT, 2.0)).thenThrow(new UnknownOutcomeError());
+
+        TipService.TransferResult result = service.transfer(
+                SENDER, RECIPIENT, recipientUuid, 2.0, "gg", "Alice", true);
+
+        assertEquals(TipService.TransferResult.Status.FAILED, result.status());
+        assertEquals(UnknownOutcomeError.USER_MESSAGE, result.userError());
         verify(db, never()).saveOfflinePayment(any());
         verify(rpc, never()).receiveBlock(anyString(), anyString());
     }

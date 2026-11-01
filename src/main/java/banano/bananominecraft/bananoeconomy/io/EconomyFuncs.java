@@ -31,7 +31,7 @@ public class EconomyFuncs
     static final long DEFAULT_BACKFILL_WAIT_MILLIS = 30_000L;
 
     /** Most pending blocks pocketed per player join (light mode); the rest wait for /receive. */
-    static final int JOIN_RECEIVE_MAX = 5;
+    public static final int JOIN_RECEIVE_MAX = 5;
 
     /** Message logged/shown when new-account allocation has to wait for the backfill. */
     public static final String SETUP_IN_PROGRESS =
@@ -116,8 +116,8 @@ public class EconomyFuncs
     /**
      * Best-effort: the transfer has already succeeded regardless of whether this does. If it
      * fails, the block is simply left pending - it is picked up later by the node's own
-     * auto-receive (node mode), by the receive-on-join / confirmation websocket (light mode, where
-     * the plugin signs for every account itself), or by a manual /receive.
+     * auto-receive (node mode), by the receive-on-join (light mode, where the plugin signs for every
+     * account itself and there is no node auto-receive), or by a manual /receive.
      *
      * <p>In light mode a receive needs proof-of-work, which can take seconds, and this is reached
      * from synchronous Vault calls that may be on the primary thread: there the receive is scheduled

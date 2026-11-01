@@ -14,10 +14,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * waiting for an account. Shared by {@code ReceiveCommand} (player wallet) and any future
  * admin tooling for the master/bank wallets.
  *
- * <p>The node normally auto-pockets deposits, after which {@code BananoWebSocket} notifies the
- * player — this service is the manual backstop for deposits that are still sitting as
- * pending/receivable blocks (e.g. received while the node's auto-receive was disabled/lagging,
- * or while the player was offline).</p>
+ * <p>In node mode the node normally auto-pockets deposits, after which {@code BananoWebSocket}
+ * notifies the player. In light mode there is no node auto-receive: the plugin pockets what is
+ * pending when a player joins and right after its own payments. This service is the manual
+ * backstop for deposits still sitting as pending/receivable blocks (e.g. received while the
+ * node's auto-receive was disabled/lagging, while the player was offline, or, in light mode,
+ * sent from outside while the player stayed online).</p>
  *
  * <p>Knows nothing about Bukkit, scheduling, or messaging — so it is unit-testable with plain
  * mocks. The command layer keeps the async boundary and player messaging.</p>

@@ -35,7 +35,8 @@ Set up a new MySQL database with a database user that can be used by the plugin.
 
 * The plugin creates all of its tables automatically on startup (`CREATE TABLE IF NOT EXISTS`),
   so the database user needs the `CREATE` privilege on the schema in addition to
-  `SELECT`, `INSERT`, `UPDATE` and `DELETE`. If you prefer not to grant `CREATE`, run the
+  `SELECT`, `INSERT`, `UPDATE` and `DELETE` (and `ALTER` for the `walletIndex` column and the unique
+  indexes, see **Several servers and the database**). If you prefer not to grant `CREATE`, run the
   following SQL in the BananoCraft schema yourself before the first start:
 
 ```sql
@@ -124,9 +125,9 @@ By default (`walletMode: node`) BananoCraft imports your wallet seed into **your
 asks the node to sign every transaction. With `walletMode: light` no node wallet is involved at all:
 
 * **How it works.** The plugin derives the account keys from your seed on the Minecraft server, builds
-  and signs each block there, generates the proof-of-work there (CPU, low priority, never on the
-  server's main thread), and only publishes the finished, signed block with the standard `process`
-  RPC. Balances, history, receivable blocks and representatives are read with ordinary read-only RPC calls.
+  and signs each block there, generates the proof-of-work there (CPU, low priority, on background
+  threads - but see **Proof-of-work and the main thread** below), and only publishes the finished,
+  signed block with the standard `process` RPC. Balances, history, receivable blocks and representatives are read with ordinary read-only RPC calls.
 * **The seed never leaves the server.** Nothing in light mode ever sends the seed (or any private key)
   over the network. `IP` can therefore be **any** Banano RPC endpoint, including a public one: it only
   ever sees public information and signed blocks. It does not need `enable_control`, and the plugin
@@ -138,6 +139,24 @@ asks the node to sign every transaction. With `walletMode: light` no node wallet
   account: if the block landed it counts as success, if it did not it is re-sent once, and if the outcome
   still cannot be established the player is told *"Transaction status unknown - check /history before
   retrying"* (it is deliberately not reported as a plain failure, because the funds may have moved).
+  The unsettled block is also saved in `plugins/BananoEconomy/pending-blocks/` (`player-<index>.json`,
+  `bank-<index>.json`, owner-only, written atomically) and republished first, even after a restart, before
+  anything else is built on that account, so it can never fork.
+* **Unknown outcomes and other plugins.** For **Vault** callers (shops etc.), bank accounts and the
+  `BananoWalletService` API an unknown outcome is *not* reported as a failure - a shop that sees a failure
+  would retry or refund and could move the funds twice. Vault and the bank layer answer `SUCCESS` with the
+  message *"outcome unknown - reconcile with /history"*; `BananoWalletService.SendResult` has
+  `success() == true` and `unknown() == true` (with a note in `userError()`, and no block hash). The server
+  log gets a `SEVERE` line with player, amount and direction so an operator can reconcile it.
+* **No automatic receive on the node.** In node mode your node pockets incoming transfers itself; in light
+  mode nothing else does, so the plugin receives for you: right after a payment it pockets the transfer,
+  and when a player joins (on a background thread, best-effort, at most 5 blocks per join) it pockets
+  whatever is pending for them. Deposits sent from outside while the player stays online are pocketed by
+  `/receive` (or at their next join); the websocket only notifies.
+* **One server per seed.** Light mode supports **exactly one server per wallet seed**. Two servers signing
+  for the same accounts would each build their own next block on the same frontier and fork the account
+  (and the per-account lock that prevents this only exists inside one process). Several servers may share
+  one database **only in node mode**, where the node serialises the signing.
 
 ### Config keys
 
@@ -156,16 +175,34 @@ walletSeed: ...             # same seed, same encryption-at-rest as before
 Every block needs a proof-of-work. Measured in the development container (Banano difficulty, plain
 CPU, one block each):
 
-| `workThreads` | average per block | worst case seen |
-|---|---|---|
-| 1 | 5.7 s | - |
-| 4 | 1.5 s | 3.2 s |
+| `workThreads` | average per block | median | worst case seen |
+|---|---|---|---|
+| 1 | 3.7 s | - | - |
+| 2 | 1.7 s | 1.2 s | ~6 s |
 
 A tip is **two** blocks: the sender's send and the recipient's receive, so expect several seconds of CPU
-work per tip (the recipient's receive happens in the background) and plan CPU accordingly (work is done by background daemon threads at minimum priority).
+work per tip (the recipient's receive happens in the background) and plan CPU accordingly (work is done by
+background daemon threads at minimum priority).
 To hide most of that latency the plugin **pre-computes work** for an account's next block right after each
-successful block; the cached work is thrown away if the account's frontier moves before it is used. A busy
-server should raise `workThreads` (up to the number of spare cores).
+successful block, for the master wallet at startup and for a player's account when they join; the cached
+work is thrown away if the account's frontier moves before it is used. A busy server should raise
+`workThreads` (up to the number of spare cores).
+
+### Proof-of-work and the main thread
+
+Proof-of-work is always computed on background threads, never on a plugin thread you control - but Vault's
+economy API is **synchronous**: when another plugin (a shop, a quest plugin) calls `depositPlayer` /
+`withdrawPlayer` on the server's main thread, the call has to return the result, so in light mode **a
+payment can block the main thread for the proof-of-work time whenever no pre-computed work is ready**
+(typically the first payment from an account, or two payments in quick succession). Expect roughly the
+numbers above: with `workThreads: 2` an average of 1.7 s (median 1.2 s, worst case about 6 s); with one
+thread an average of 3.7 s. The slow, non-essential part is moved off the main thread (the recipient's
+receive is always scheduled in the background there), and commands (`/tip`, `/withdraw`, ...) always run
+off the main thread.
+
+* Use `workThreads` of **2 or more** (up to the number of spare cores).
+* For servers with **heavy Vault shop traffic, use node mode** (`walletMode: node`), where the node
+  generates the work and signing is quick.
 
 ### Account indices and the startup backfill
 
@@ -182,7 +219,26 @@ those accounts and stores the index. Anything it cannot match is listed in a sin
 light mode such an account **cannot send, receive or change representative** (the player gets a clear
 error, and is never silently given a new wallet) until it is matched; raise `walletIndexScanLimit` and
 restart. The scan runs in the background right after startup, so a legacy player who spends in the very
-first seconds after a restart may briefly get the same error.
+first seconds after a restart may briefly get the same error. Until the scan has finished the plugin does
+**not** hand out new indices (a new index could otherwise collide with a not-yet-matched legacy account):
+a brand-new player (or a new bank) joining in that window is told that wallet setup is in progress and to
+rejoin shortly, and existing players are not affected. When many addresses are already taken (for example
+by unmatched legacy accounts) the plugin keeps looking for a free index, up to `walletIndexScanLimit`.
+
+### Several servers and the database
+
+* The MySQL `users.wallet`, `users.walletIndex`, `banks.address` and `banks.walletIndex` columns and the
+  MongoDB `users.wallet` / `users.walletIndex` / `banks.address` / `banks.walletIndex` fields get
+  **UNIQUE indexes** (`uq_users_wallet`, `uq_users_walletIndex`, `uq_banks_address`, `uq_banks_walletIndex`;
+  `walletIndex` may stay empty for legacy accounts) created idempotently at startup, so two servers (or a
+  bug) can never store the same address or index twice. If a record cannot be inserted because the index or
+  address is already taken, the plugin tries the next index instead of overwriting anything. If an index
+  cannot be created because the data already contains duplicates, the duplicates are listed in a `SEVERE`
+  log line and the plugin keeps running without that constraint - fix the duplicates and restart. The
+  database user needs the `ALTER`/`INDEX` privilege for this on MySQL. JSON storage is single-process and
+  has no such constraint.
+* Light mode: **one server per seed** (see above). Multiple servers may share a database only in node mode.
+
 
 ### Switching modes
 

@@ -115,7 +115,8 @@ public class BankService
     /**
      * Best-effort: the transfer has already succeeded regardless of whether this does. If it
      * fails, the block is simply left pending until the next receive (node mode: the node's own
-     * auto-receive; light mode: receive-on-join, the websocket or a manual /receive).
+     * auto-receive; light mode, which has none: receive-on-join of the owning player or a manual
+     * /receive).
      *
      * <p>In light mode a receive needs proof-of-work (seconds) and this is reached from synchronous
      * Vault calls that may be on the primary thread: there it is scheduled on a background thread.</p>

@@ -1,10 +1,15 @@
 package banano.bananominecraft.bananoeconomy.services;
 
 import banano.bananominecraft.bananoeconomy.classes.BankRecord;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
+import banano.bananominecraft.bananoeconomy.db.DuplicateWalletException;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.io.RPC;
+import banano.bananominecraft.bananoeconomy.wallet.BackfillGate;
+import banano.bananominecraft.bananoeconomy.wallet.MainThreadGuard;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -593,5 +598,238 @@ class BankServiceTest
         double afterFailedWithdraw = service.getBankBalance(BANK_NAME);
         assertEquals(30.0, afterFailedWithdraw);
         verify(rpc, times(2)).getBalance(BANK_ADDR); // pre-warm + sufficiency check only
+    }
+
+    // -------------------------------------------------------------------------
+    // Unknown outcome (light mode): reported as success, never as failure
+    // -------------------------------------------------------------------------
+
+    /** Captures SEVERE records logged by the plugin's logger. */
+    private java.util.List<java.util.logging.LogRecord> captureSevere()
+    {
+        java.util.List<java.util.logging.LogRecord> records = new java.util.ArrayList<>();
+        Logger logger = Logger.getLogger("bank-unknown-test");
+        logger.setUseParentHandlers(false);
+        logger.addHandler(new java.util.logging.Handler()
+        {
+            @Override public void publish(java.util.logging.LogRecord r)
+            {
+                if (r.getLevel() == java.util.logging.Level.SEVERE) records.add(r);
+            }
+            @Override public void flush() {}
+            @Override public void close() {}
+        });
+        when(plugin.getLogger()).thenReturn(logger);
+        return records;
+    }
+
+    @Test
+    void DepositUnknownOutcomeIsSuccess_logsSevere_andSkipsReceive() throws TransactionError
+    {
+        java.util.List<java.util.logging.LogRecord> severe = captureSevere();
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenThrow(new UnknownOutcomeError());
+
+        assertEquals(TransferOutcome.UNKNOWN, service.depositOutcome(BANK_NAME, 50.0));
+        assertTrue(service.deposit(BANK_NAME, 50.0), "boolean API must not report an unknown outcome as failure");
+
+        verify(rpc, never()).receiveBlock(anyString(), anyString(), anyString());
+        assertFalse(severe.isEmpty());
+        String message = severe.get(0).getMessage();
+        assertTrue(message.contains(BANK_NAME) && message.contains("50.0") && message.contains("deposit")
+                && message.contains("outcome unknown \u2013 reconcile with /history"), message);
+    }
+
+    @Test
+    void WithdrawUnknownOutcomeIsSuccess_logsSevere() throws TransactionError
+    {
+        java.util.List<java.util.logging.LogRecord> severe = captureSevere();
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(BANK_ADDR)).thenReturn(100.0);
+        when(rpc.sendTransaction(BANK_ADDR, MASTER_ADDR, 40.0, BANK_WALLET)).thenThrow(new UnknownOutcomeError());
+
+        assertEquals(TransferOutcome.UNKNOWN, service.withdrawOutcome(BANK_NAME, 40.0));
+        assertTrue(service.withdraw(BANK_NAME, 40.0));
+        assertFalse(severe.isEmpty());
+        assertTrue(severe.get(0).getMessage().contains("withdrawal"), severe.get(0).getMessage());
+    }
+
+    @Test
+    void PlainTransactionErrorStillFails_outcomeIsFailedNotUnknown() throws TransactionError
+    {
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenThrow(new TransactionError("rejected"));
+
+        assertEquals(TransferOutcome.FAILED, service.depositOutcome(BANK_NAME, 50.0));
+    }
+
+    // -------------------------------------------------------------------------
+    // Light mode: the (slow) auto-receive never runs on the primary thread
+    // -------------------------------------------------------------------------
+
+    @Test
+    void LightModeAutoReceiveOnPrimaryThreadIsScheduledAsync() throws TransactionError
+    {
+        java.util.List<Runnable> scheduled = new java.util.ArrayList<>();
+        service.setThreadGuard(new MainThreadGuard(() -> true, scheduled::add));
+        when(configEngine.isLightMode()).thenReturn(true);
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenReturn("block1");
+
+        assertTrue(service.deposit(BANK_NAME, 50.0));
+
+        verify(rpc, never()).receiveBlock(anyString(), anyString(), anyString());
+        assertEquals(1, scheduled.size());
+        scheduled.get(0).run();
+        verify(rpc).receiveBlock(BANK_WALLET, BANK_ADDR, "block1");
+    }
+
+    @Test
+    void LightModeAutoReceiveOffPrimaryThreadRunsInline() throws TransactionError
+    {
+        java.util.List<Runnable> scheduled = new java.util.ArrayList<>();
+        service.setThreadGuard(new MainThreadGuard(() -> false, scheduled::add));
+        when(configEngine.isLightMode()).thenReturn(true);
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenReturn("block1");
+
+        assertTrue(service.deposit(BANK_NAME, 50.0));
+
+        assertTrue(scheduled.isEmpty());
+        verify(rpc).receiveBlock(BANK_WALLET, BANK_ADDR, "block1");
+    }
+
+    @Test
+    void NodeModeAutoReceiveIsAlwaysInline() throws TransactionError
+    {
+        java.util.List<Runnable> scheduled = new java.util.ArrayList<>();
+        service.setThreadGuard(new MainThreadGuard(() -> true, scheduled::add));
+        when(configEngine.isLightMode()).thenReturn(false);
+        BankRecord bank = new BankRecord(BANK_NAME, BANK_ADDR, OWNER_UUID, 0);
+        when(db.getBankRecord(BANK_NAME)).thenReturn(bank);
+        when(rpc.getBalance(MASTER_ADDR)).thenReturn(500.0);
+        when(rpc.sendTransaction(MASTER_ADDR, BANK_ADDR, 50.0)).thenReturn("block1");
+
+        assertTrue(service.deposit(BANK_NAME, 50.0));
+
+        assertTrue(scheduled.isEmpty());
+        verify(rpc).receiveBlock(BANK_WALLET, BANK_ADDR, "block1");
+    }
+
+    // -------------------------------------------------------------------------
+    // createBank: backfill gate, duplicate-key handling, long skip runs
+    // -------------------------------------------------------------------------
+
+    @Test
+    void CreateBankWaitsForBackfill_andFailsWithoutAllocatingWhenItDoesNotFinish()
+    {
+        BackfillGate closed = new BackfillGate(false, MainThreadGuard.neverPrimary());
+        service.setBackfillGate(closed, 50L);
+        when(db.bankNameExists(anyString())).thenReturn(false);
+
+        assertNull(service.createBank("new-bank", OWNER_UUID));
+        assertTrue(service.isWalletSetupPending());
+        verify(db, never()).getMaxBankWalletIndex();
+        verify(rpc, never()).accountCreate(anyInt(), anyString());
+    }
+
+    @Test
+    void CreateBankProceedsOnceBackfillHasFinished()
+    {
+        BackfillGate gate = new BackfillGate(false, MainThreadGuard.neverPrimary());
+        service.setBackfillGate(gate, 5_000L);
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(db.createBankRecord(any())).thenReturn(true);
+
+        new Thread(() ->
+        {
+            try { Thread.sleep(100); } catch (InterruptedException ignored) { }
+            gate.open();
+        }).start();
+
+        assertNotNull(service.createBank("new-bank", OWNER_UUID));
+        assertFalse(service.isWalletSetupPending());
+    }
+
+    @Test
+    void CreateBankOnPrimaryThreadNeverBlocksOnTheGate()
+    {
+        service.setBackfillGate(new BackfillGate(false, new MainThreadGuard(() -> true, Runnable::run)), 60_000L);
+        when(db.bankNameExists(anyString())).thenReturn(false);
+
+        long start = System.nanoTime();
+        assertNull(service.createBank("new-bank", OWNER_UUID));
+        assertTrue((System.nanoTime() - start) / 1_000_000 < 5_000, "must return immediately on the primary thread");
+    }
+
+    @Test
+    void CreateBankDuplicateKeyMeansIndexTaken_triesNextIndex()
+    {
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(1, BANK_WALLET)).thenReturn(BANK_ADDR);
+        when(rpc.accountCreate(2, BANK_WALLET)).thenReturn(OTHER_BANK_ADDR);
+        when(db.createBankRecord(argThat(b -> b != null && b.getWalletIndex() == 1)))
+                .thenThrow(new DuplicateWalletException("taken by another server", null));
+        when(db.createBankRecord(argThat(b -> b != null && b.getWalletIndex() == 2))).thenReturn(true);
+
+        BankRecord created = service.createBank("new-bank", OWNER_UUID);
+
+        assertNotNull(created);
+        assertEquals(2, created.getWalletIndex());
+        assertEquals(OTHER_BANK_ADDR, created.getAddress());
+        verify(db).addBankMember("new-bank", OWNER_UUID);
+    }
+
+    @Test
+    void CreateBankKeepsSkippingTakenAddressesBeyondTenAttempts()
+    {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        for (int i = 1; i <= 15; i++)
+        {
+            String name = "legacy" + i;
+            names.add(name);
+            when(db.getBankRecord(name)).thenReturn(new BankRecord(name, addr(i), OWNER_UUID, 0L));
+        }
+        when(db.getAllBankNames()).thenReturn(names);
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenAnswer(inv -> addr(inv.getArgument(0)));
+        when(db.createBankRecord(any())).thenReturn(true);
+
+        BankRecord created = service.createBank("new-bank", OWNER_UUID);
+
+        assertNotNull(created, "15 consecutive taken addresses must not abort creation");
+        assertEquals(16, created.getWalletIndex());
+    }
+
+    @Test
+    void CreateBankGivesUpAfterWalletIndexScanLimit()
+    {
+        when(configEngine.getWalletIndexScanLimit()).thenReturn(3);
+        when(db.bankNameExists(anyString())).thenReturn(false);
+        when(db.getMaxBankWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(anyInt(), eq(BANK_WALLET))).thenAnswer(inv -> addr(inv.getArgument(0)));
+        when(db.createBankRecord(any())).thenThrow(new DuplicateWalletException("taken", null));
+
+        assertNull(service.createBank("new-bank", OWNER_UUID));
+        verify(db, times(3)).createBankRecord(any());
+    }
+
+    private static String addr(int i)
+    {
+        String alphabet = "13456789abcdefghijkmnopqrstuwxyz";
+        return "ban_3" + String.valueOf(alphabet.charAt(i % 32)).repeat(58) + alphabet.charAt(i / 32 % 32);
     }
 }

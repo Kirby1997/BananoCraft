@@ -114,4 +114,63 @@ class OnJoinTest
 
         verify(messageGenerator, never()).generateClickToViewOfflinePayments(any());
     }
+
+    private String allMessages()
+    {
+        StringBuilder all = new StringBuilder();
+        String message;
+        while ((message = player.nextMessage()) != null)
+        {
+            all.append(message).append('\n');
+        }
+        return all.toString();
+    }
+
+    @Test
+    void join_accountReady_preparesWalletOnJoin_afterTheAccountExists()
+    {
+        when(economyFuncs.accountCreate(player)).thenReturn(true);
+        when(economyFuncs.getWallet(player)).thenReturn("ban_wallet");
+
+        fireJoin();
+
+        org.mockito.InOrder order = inOrder(economyFuncs, webSocket);
+        order.verify(economyFuncs).accountCreate(player);
+        order.verify(webSocket).watchAccount("ban_wallet", player.getUniqueId());
+        order.verify(economyFuncs).prepareWalletOnJoin(player);
+    }
+
+    @Test
+    void join_accountCreateFails_doesNotPrepareWallet()
+    {
+        when(economyFuncs.accountCreate(player)).thenReturn(false);
+
+        fireJoin();
+
+        verify(economyFuncs, never()).prepareWalletOnJoin(any());
+    }
+
+    @Test
+    void join_accountCreateFailsWhileWalletSetupPending_tellsPlayerToRejoin()
+    {
+        when(economyFuncs.accountCreate(player)).thenReturn(false);
+        when(economyFuncs.isWalletSetupPending()).thenReturn(true);
+
+        fireJoin();
+
+        String messages = allMessages();
+        org.junit.jupiter.api.Assertions.assertTrue(messages.contains("still being set up"), messages);
+        org.junit.jupiter.api.Assertions.assertFalse(messages.contains("could not be configured"), messages);
+    }
+
+    @Test
+    void join_accountCreateFailsNormally_showsTheGenericWalletError()
+    {
+        when(economyFuncs.accountCreate(player)).thenReturn(false);
+        when(economyFuncs.isWalletSetupPending()).thenReturn(false);
+
+        fireJoin();
+
+        org.junit.jupiter.api.Assertions.assertTrue(allMessages().contains("could not be configured"));
+    }
 }

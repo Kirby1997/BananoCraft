@@ -19,9 +19,11 @@ import java.util.Locale;
 /**
  * Lets a player manually pocket any pending ("receivable") deposits waiting for their wallet.
  *
- * <p>The node normally auto-pockets deposits, with {@code BananoWebSocket} then notifying the
- * player — this command is a manual backstop for deposits still sitting pending (e.g. received
- * while the player, or the node's auto-receive, was unavailable).</p>
+ * <p>In node mode the node normally auto-pockets deposits, with {@code BananoWebSocket} then
+ * notifying the player. In light mode there is no node auto-receive (the plugin pockets pending
+ * blocks on join and after its own payments), so this command is also how outside deposits sent
+ * while the player stays online are pocketed. It is the manual backstop for deposits still
+ * sitting pending.</p>
  */
 public class ReceiveCommand implements CommandExecutor
 {

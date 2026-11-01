@@ -2,10 +2,15 @@ package banano.bananominecraft.bananoeconomy;
 
 import banano.bananominecraft.bananoeconomy.classes.PlayerRecord;
 import banano.bananominecraft.bananoeconomy.classes.TransactionRecord;
+import banano.bananominecraft.bananoeconomy.classes.TransferOutcome;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.db.IDBConnector;
 import banano.bananominecraft.bananoeconomy.enums.TransactionDirection;
+import banano.bananominecraft.bananoeconomy.db.DuplicateWalletException;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
+import banano.bananominecraft.bananoeconomy.wallet.BackfillGate;
+import banano.bananominecraft.bananoeconomy.wallet.MainThreadGuard;
 import banano.bananominecraft.bananoeconomy.io.EconomyFuncs;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 import org.bukkit.OfflinePlayer;
@@ -791,7 +796,8 @@ class EconomyFuncsTest {
     }
 
     @Test
-    void accountCreate_newPlayer_givesUp_afterTenAssignedAddresses() {
+    void accountCreate_newPlayer_givesUp_afterWalletIndexScanLimitAssignedAddresses() {
+        when(configEngine.getWalletIndexScanLimit()).thenReturn(10);
         when(player.getName()).thenReturn("Alice");
         when(db.hasPlayerRecord(player)).thenReturn(false);
         when(db.getMaxPlayerWalletIndex()).thenReturn(0);
@@ -1029,5 +1035,356 @@ class EconomyFuncsTest {
 
         assertEquals(2, maxConcurrent.get(),
                 "Different wallets are independent accounts and must not be serialized against each other");
+    }
+
+    // --- accountCreate: skipping assigned addresses, duplicate keys, backfill gate ---
+
+    @Test
+    void accountCreate_newPlayer_keepsSkippingAssignedAddresses_beyondTenAttempts() {
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(anyInt())).thenAnswer(inv -> addressForIndex(inv.getArgument(0)));
+        when(db.isAlreadyAssignedToOtherPlayer(anyString(), eq(player))).thenAnswer(inv ->
+                java.util.stream.IntStream.rangeClosed(1, 25).anyMatch(i -> addressForIndex(i).equals(inv.getArgument(0))));
+        when(db.createPlayerRecord(eq(player), anyString(), any()))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false, 26));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(db).createPlayerRecord(player, addressForIndex(26), 26);
+    }
+
+    @Test
+    void accountCreate_duplicateKeyOnInsert_triesNextIndex_neverOverwrites() {
+        String first = addressForIndex(1);
+        String second = addressForIndex(2);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(1)).thenReturn(first);
+        when(rpc.accountCreate(2)).thenReturn(second);
+        when(db.createPlayerRecord(player, first, 1)).thenThrow(new DuplicateWalletException("taken", null));
+        when(db.createPlayerRecord(player, second, 2))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", second, false, 2));
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(db).createPlayerRecord(player, second, 2);
+    }
+
+    @Test
+    void accountCreate_duplicateKeyOnRepair_triesNextIndex() {
+        String first = addressForIndex(1);
+        String second = addressForIndex(2);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(true);
+        when(db.getPlayerRecord(player)).thenReturn(
+                new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
+        when(rpc.accountCreate(1)).thenReturn(first);
+        when(rpc.accountCreate(2)).thenReturn(second);
+        when(db.updatePlayerWallet(player, first, 1)).thenThrow(new DuplicateWalletException("taken", null));
+        when(db.updatePlayerWallet(player, second, 2)).thenReturn(true);
+
+        assertTrue(economyFuncs.accountCreate(player));
+        verify(db).updatePlayerWallet(player, second, 2);
+    }
+
+    @Test
+    void accountCreate_duplicateKeyEveryTime_givesUpAtScanLimit() {
+        when(configEngine.getWalletIndexScanLimit()).thenReturn(4);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(0);
+        when(rpc.accountCreate(anyInt())).thenAnswer(inv -> addressForIndex(inv.getArgument(0)));
+        when(db.createPlayerRecord(eq(player), anyString(), any())).thenThrow(new DuplicateWalletException("taken", null));
+
+        assertFalse(economyFuncs.accountCreate(player));
+        verify(db, times(4)).createPlayerRecord(eq(player), anyString(), any());
+    }
+
+    @Test
+    void accountCreate_newPlayer_failsFastWithoutAllocating_whileBackfillRunning() {
+        economyFuncs.setBackfillGate(new BackfillGate(false, MainThreadGuard.neverPrimary()), 50L);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+
+        assertFalse(economyFuncs.accountCreate(player));
+        assertTrue(economyFuncs.isWalletSetupPending());
+        verify(db, never()).getMaxPlayerWalletIndex();
+        verify(rpc, never()).accountCreate(anyInt());
+        verify(db, never()).createPlayerRecord(any(Player.class), anyString(), any());
+    }
+
+    @Test
+    void accountCreate_newPlayer_waitsForBackfill_thenAllocates() {
+        BackfillGate gate = new BackfillGate(false, MainThreadGuard.neverPrimary());
+        economyFuncs.setBackfillGate(gate, 5_000L);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(false);
+        when(db.getMaxPlayerWalletIndex()).thenReturn(3);
+        when(rpc.accountCreate(4)).thenReturn(WALLET);
+        when(db.createPlayerRecord(player, WALLET, 4))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false, 4));
+
+        new Thread(() -> {
+            try { Thread.sleep(100); } catch (InterruptedException ignored) { }
+            gate.open();
+        }).start();
+
+        assertTrue(economyFuncs.accountCreate(player));
+        assertFalse(economyFuncs.isWalletSetupPending());
+    }
+
+    @Test
+    void accountCreate_existingValidRecord_doesNotWaitForBackfill() {
+        economyFuncs.setBackfillGate(new BackfillGate(false, MainThreadGuard.neverPrimary()), 60_000L);
+        when(player.getName()).thenReturn("Alice");
+        when(db.hasPlayerRecord(player)).thenReturn(true);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+
+        assertTrue(economyFuncs.accountCreate(player));
+    }
+
+    // --- Unknown outcome: success for Vault/boolean callers, SEVERE log, no receive ---
+
+    private java.util.List<java.util.logging.LogRecord> captureSevere() {
+        java.util.List<java.util.logging.LogRecord> records = new java.util.ArrayList<>();
+        Logger logger = Logger.getLogger("economyfuncs-unknown-test");
+        logger.setUseParentHandlers(false);
+        logger.addHandler(new java.util.logging.Handler() {
+            @Override public void publish(java.util.logging.LogRecord r) {
+                if (r.getLevel() == java.util.logging.Level.SEVERE) records.add(r);
+            }
+            @Override public void flush() { }
+            @Override public void close() { }
+        });
+        when(plugin.getLogger()).thenReturn(logger);
+        return records;
+    }
+
+    private void assertUnknownLogged(java.util.List<java.util.logging.LogRecord> severe, String direction) {
+        assertEquals(1, severe.size());
+        String message = severe.get(0).getMessage();
+        assertTrue(message.contains("Alice"), message);
+        assertTrue(message.contains("5.0"), message);
+        assertTrue(message.contains(direction), message);
+        assertTrue(message.contains("outcome unknown \u2013 reconcile with /history"), message);
+    }
+
+    @Test
+    void removeBalanceFP_player_unknownOutcome_isSuccess_andLoggedSevere() throws Exception {
+        java.util.List<java.util.logging.LogRecord> severe = captureSevere();
+        PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false);
+        when(db.getPlayerRecord(player)).thenReturn(record);
+        when(rpc.getBalance(WALLET)).thenReturn(10.0);
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.sendTransaction(WALLET, MASTER_WALLET, 5.0)).thenThrow(new UnknownOutcomeError());
+
+        assertEquals(TransferOutcome.UNKNOWN, economyFuncs.removeBalanceFPOutcome(player, 5.0));
+        assertTrue(economyFuncs.removeBalanceFP(player, 5.0));
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+        assertEquals(2, severe.size());
+        severe.remove(1);
+        assertUnknownLogged(severe, "withdraw");
+    }
+
+    @Test
+    void removeBalanceFP_offline_unknownOutcome_isSuccess_andLoggedSevere() throws Exception {
+        java.util.List<java.util.logging.LogRecord> severe = captureSevere();
+        PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false);
+        when(db.getOfflinePlayerRecord(offlinePlayer)).thenReturn(record);
+        when(rpc.getBalance(WALLET)).thenReturn(10.0);
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.sendTransaction(WALLET, MASTER_WALLET, 5.0)).thenThrow(new UnknownOutcomeError());
+
+        assertEquals(TransferOutcome.UNKNOWN, economyFuncs.removeBalanceFPOutcome(offlinePlayer, 5.0));
+        assertUnknownLogged(severe, "withdraw");
+        assertTrue(economyFuncs.removeBalanceFP(offlinePlayer, 5.0));
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+    }
+
+    @Test
+    void addBalanceTP_player_unknownOutcome_isSuccess_andLoggedSevere() throws Exception {
+        java.util.List<java.util.logging.LogRecord> severe = captureSevere();
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenThrow(new UnknownOutcomeError());
+
+        assertEquals(TransferOutcome.UNKNOWN, economyFuncs.addBalanceTPOutcome(player, 5.0));
+        assertUnknownLogged(severe, "deposit");
+        assertTrue(economyFuncs.addBalanceTP(player, 5.0));
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+    }
+
+    @Test
+    void addBalanceTP_offline_unknownOutcome_isSuccess_andLoggedSevere() throws Exception {
+        java.util.List<java.util.logging.LogRecord> severe = captureSevere();
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(db.getOfflinePlayerRecord(offlinePlayer))
+                .thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenThrow(new UnknownOutcomeError());
+
+        assertEquals(TransferOutcome.UNKNOWN, economyFuncs.addBalanceTPOutcome(offlinePlayer, 5.0));
+        assertUnknownLogged(severe, "deposit");
+        assertTrue(economyFuncs.addBalanceTP(offlinePlayer, 5.0));
+    }
+
+    @Test
+    void plainTransactionError_isStillFailure_notUnknown() throws Exception {
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenThrow(new TransactionError("Timeout"));
+
+        assertEquals(TransferOutcome.FAILED, economyFuncs.addBalanceTPOutcome(player, 5.0));
+        assertFalse(economyFuncs.addBalanceTP(player, 5.0));
+    }
+
+    // --- Light mode: no synchronous proof-of-work on the primary thread ---
+
+    @Test
+    void lightMode_autoReceiveOnPrimaryThread_isScheduledAsync() throws Exception {
+        java.util.List<Runnable> scheduled = new java.util.ArrayList<>();
+        economyFuncs.setThreadGuard(new MainThreadGuard(() -> true, scheduled::add));
+        when(configEngine.isLightMode()).thenReturn(true);
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenReturn("blockDEF");
+
+        assertTrue(economyFuncs.addBalanceTP(player, 5.0));
+
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+        assertEquals(1, scheduled.size());
+        scheduled.get(0).run();
+        verify(rpc).receiveBlock(WALLET, "blockDEF");
+    }
+
+    @Test
+    void lightMode_removeBalanceReceiveOnPrimaryThread_isScheduledAsync_forEveryOverload() throws Exception {
+        java.util.List<Runnable> scheduled = new java.util.ArrayList<>();
+        economyFuncs.setThreadGuard(new MainThreadGuard(() -> true, scheduled::add));
+        when(configEngine.isLightMode()).thenReturn(true);
+        PlayerRecord record = new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false);
+        when(db.getPlayerRecord(player)).thenReturn(record);
+        when(db.getOfflinePlayerRecord(offlinePlayer)).thenReturn(record);
+        when(rpc.getBalance(WALLET)).thenReturn(10.0);
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.sendTransaction(WALLET, MASTER_WALLET, 5.0)).thenReturn("b1", "b2");
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenReturn("b3");
+
+        assertTrue(economyFuncs.removeBalanceFP(player, 5.0));
+        assertTrue(economyFuncs.removeBalanceFP(offlinePlayer, 5.0));
+        assertTrue(economyFuncs.addBalanceTP(offlinePlayer, 5.0));
+
+        verify(rpc, never()).receiveBlock(anyString(), anyString());
+        assertEquals(3, scheduled.size());
+        scheduled.forEach(Runnable::run);
+        verify(rpc).receiveBlock(MASTER_WALLET, "b1");
+        verify(rpc).receiveBlock(MASTER_WALLET, "b2");
+        verify(rpc).receiveBlock(WALLET, "b3");
+    }
+
+    @Test
+    void lightMode_autoReceiveOffPrimaryThread_runsInline() throws Exception {
+        economyFuncs.setThreadGuard(new MainThreadGuard(() -> false, r -> fail("must not schedule")));
+        when(configEngine.isLightMode()).thenReturn(true);
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenReturn("blockDEF");
+
+        assertTrue(economyFuncs.addBalanceTP(player, 5.0));
+        verify(rpc).receiveBlock(WALLET, "blockDEF");
+    }
+
+    @Test
+    void nodeMode_autoReceiveOnPrimaryThread_staysInline() throws Exception {
+        economyFuncs.setThreadGuard(new MainThreadGuard(() -> true, r -> fail("must not schedule")));
+        when(configEngine.isLightMode()).thenReturn(false);
+        when(rpc.getMasterWallet()).thenReturn(MASTER_WALLET);
+        when(rpc.getBalance(MASTER_WALLET)).thenReturn(100.0);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.sendTransaction(MASTER_WALLET, WALLET, 5.0)).thenReturn("blockDEF");
+
+        assertTrue(economyFuncs.addBalanceTP(player, 5.0));
+        verify(rpc).receiveBlock(WALLET, "blockDEF");
+    }
+
+    // --- Light mode: receive + work precompute when a player joins ---
+
+    @Test
+    void prepareWalletOnJoin_lightMode_precomputesWork_andPocketsPendingBlocks() throws Exception {
+        when(configEngine.isLightMode()).thenReturn(true);
+        economyFuncs.setThreadGuard(MainThreadGuard.neverPrimary());
+        when(player.getName()).thenReturn("Alice");
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.receivablePending(WALLET)).thenReturn(List.of("h1", "h2"));
+
+        economyFuncs.prepareWalletOnJoin(player);
+
+        verify(rpc).precomputeWork(WALLET);
+        verify(rpc).receiveBlock(WALLET, "h1");
+        verify(rpc).receiveBlock(WALLET, "h2");
+    }
+
+    @Test
+    void prepareWalletOnJoin_isBounded() throws Exception {
+        when(configEngine.isLightMode()).thenReturn(true);
+        economyFuncs.setThreadGuard(MainThreadGuard.neverPrimary());
+        when(player.getName()).thenReturn("Alice");
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        List<String> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 25; i++) many.add("h" + i);
+        when(rpc.receivablePending(WALLET)).thenReturn(many);
+
+        economyFuncs.prepareWalletOnJoin(player);
+
+        verify(rpc, times(EconomyFuncs.JOIN_RECEIVE_MAX)).receiveBlock(eq(WALLET), anyString());
+    }
+
+    @Test
+    void prepareWalletOnJoin_stopsQuietly_onReceiveFailure_andNeverThrows() throws Exception {
+        when(configEngine.isLightMode()).thenReturn(true);
+        economyFuncs.setThreadGuard(MainThreadGuard.neverPrimary());
+        when(player.getName()).thenReturn("Alice");
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, false));
+        when(rpc.receivablePending(WALLET)).thenReturn(List.of("h1", "h2"));
+        when(rpc.receiveBlock(WALLET, "h1")).thenThrow(new TransactionError("network"));
+
+        assertDoesNotThrow(() -> economyFuncs.prepareWalletOnJoin(player));
+        verify(rpc, never()).receiveBlock(WALLET, "h2");
+    }
+
+    @Test
+    void prepareWalletOnJoin_nodeMode_doesNothing() throws Exception {
+        when(configEngine.isLightMode()).thenReturn(false);
+        economyFuncs.prepareWalletOnJoin(player);
+        verifyNoInteractions(rpc);
+    }
+
+    @Test
+    void prepareWalletOnJoin_skipsFrozenAndWalletlessPlayers() throws Exception {
+        when(configEngine.isLightMode()).thenReturn(true);
+        economyFuncs.setThreadGuard(MainThreadGuard.neverPrimary());
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", WALLET, true));
+        economyFuncs.prepareWalletOnJoin(player);
+        when(db.getPlayerRecord(player)).thenReturn(new PlayerRecord(UUID.randomUUID().toString(), "Alice", RPC.ACCOUNT_CREATION_FAILED, false));
+        economyFuncs.prepareWalletOnJoin(player);
+        verifyNoInteractions(rpc);
+    }
+
+    @Test
+    void prepareWalletOnJoin_onPrimaryThread_isScheduledAsync() throws Exception {
+        java.util.List<Runnable> scheduled = new java.util.ArrayList<>();
+        when(configEngine.isLightMode()).thenReturn(true);
+        economyFuncs.setThreadGuard(new MainThreadGuard(() -> true, scheduled::add));
+
+        economyFuncs.prepareWalletOnJoin(player);
+
+        assertEquals(1, scheduled.size());
+        verifyNoInteractions(rpc);
     }
 }

@@ -1012,4 +1012,27 @@ class RPCTest
         verify(http).post(anyString(), anyString());
         verifyNoInteractions(signer);
     }
+
+    @Test
+    void precomputeWork_delegatesToSigner_withTheConfiguredWallet()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+
+        rpcWith(signer).precomputeWork(SENDER);
+
+        verify(signer).precomputeWork("WALLET_ID", SENDER);
+    }
+
+    @Test
+    void precomputeWork_ignoresInvalidAddresses_andNeverThrows()
+    {
+        WalletSigner signer = mock(WalletSigner.class);
+        doThrow(new IllegalStateException("boom")).when(signer).precomputeWork(anyString(), anyString());
+
+        RPC delegating = rpcWith(signer);
+        delegating.precomputeWork("nope");
+        verifyNoInteractions(signer);
+
+        assertDoesNotThrow(() -> delegating.precomputeWork("W", SENDER));
+    }
 }

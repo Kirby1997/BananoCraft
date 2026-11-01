@@ -339,4 +339,31 @@ class LightWalletSignerTest
         verify(config, never()).setWalletId(anyString());
         verify(config, never()).save();
     }
+
+    // -------------------------------------------------------------------------
+    // work precompute hint
+    // -------------------------------------------------------------------------
+
+    @Test
+    void precomputeWork_resolvesTheIndex_andAsksTheLightWallet()
+    {
+        signer.precomputeWork(WalletSigner.LIGHT_PLAYER_WALLET_ID, MASTER);
+        signer.precomputeWork(WalletSigner.LIGHT_PLAYER_WALLET_ID, PLAYER_ONE);
+        signer.precomputeWork(WalletSigner.LIGHT_BANK_WALLET_ID, BANK_ADDR);
+
+        verify(playerWallet).precomputeWork(0);
+        verify(playerWallet).precomputeWork(1);
+        verify(bankWallet).precomputeWork(7);
+    }
+
+    @Test
+    void precomputeWork_isBestEffort_forUnmatchedAccountsAndMissingSeeds()
+    {
+        assertDoesNotThrow(() -> signer.precomputeWork(WalletSigner.LIGHT_PLAYER_WALLET_ID, LEGACY));
+        assertDoesNotThrow(() -> signer.precomputeWork("nonsense", MASTER));
+        verify(playerWallet, never()).precomputeWork(anyInt());
+
+        LightWalletSigner noSeed = new LightWalletSigner(null, null, lookup, Logger.getLogger("test"));
+        assertDoesNotThrow(() -> noSeed.precomputeWork(WalletSigner.LIGHT_PLAYER_WALLET_ID, MASTER));
+    }
 }
