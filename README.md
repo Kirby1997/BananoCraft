@@ -119,6 +119,37 @@ written to `seed-backup.txt` (readable only by the server's OS user) — copy it
 offline and delete the file. Keep `secret.key` together with `config.yml` in your backups: the
 seed in `config.yml` is encrypted with it.
 
+## Node RPC timeouts on the main thread
+
+Vault's economy API is synchronous, so a shop plugin's `depositPlayer` / `withdrawPlayer` runs the node RPC
+on the server's **main thread**. With the normal timeouts (10 s connect, 15 s read) a slow or unreachable
+node could freeze the server for that long. When a node call is made on the main thread BananoCraft therefore
+uses short timeouts (calls on other threads - commands, background tasks - keep the normal ones). This applies
+to every node call in both modes (node-wallet actions, balance/history queries and the light wallet's RPC).
+
+```yaml
+mainThreadConnectTimeoutMs: 1000   # 100-10000 (default 1000)
+mainThreadReadTimeoutMs: 5000      # 100-15000 (default 5000); 0 = disabled, normal timeouts everywhere
+```
+
+The read timeout also caps the total time spent reading a response. Invalid values are replaced by the
+defaults with a warning in the log.
+
+**What happens when a send times out.** In node mode, if a `send`, `receive` or `account_representative_set`
+request had already been sent when the wait expired (read timeout, connection reset), the plugin cannot know
+whether the node processed it. It is reported as an **unknown outcome**, never as a plain failure: Vault
+callers get `SUCCESS` (so the shop does not hand out a refund or duplicate), a `SEVERE` line is written to the
+log, and the player sees "Transaction status unknown - check /history before retrying". Reconcile with
+`/history` (or your node/explorer). The plugin never retries such a send with a new id; every send carries an
+idempotency `id`, so even a retry of the same logical send cannot pay twice (the node returns the original
+block). A failure *before* the request was sent (connect timeout, connection refused, unknown host) is a
+normal failed transaction - nothing left the server. Read-only queries (balance, history) just fail as
+before. In light mode the existing unknown-outcome handling applies: the signed block is kept and
+republished before anything else on that account.
+
+If your node is slow rather than down, raise `mainThreadReadTimeoutMs` (or set it to `0` to restore the old
+behaviour); a too-small value turns slow-but-successful sends into "unknown outcome" reports.
+
 ## Light wallet mode (no node required)
 
 By default (`walletMode: node`) BananoCraft imports your wallet seed into **your own** Banano node and

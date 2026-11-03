@@ -26,6 +26,17 @@ defaultRepresentative: ""
 # Raise this if you ever created more than 10000 accounts in one wallet.
 walletIndexScanLimit: 10000
 
+# Node RPC timeouts for calls made on the server's main thread (both modes). Vault calls from shop
+# plugins are synchronous, so a slow node would otherwise freeze the server for up to the normal 10 s
+# connect / 15 s read timeouts. On the main thread the plugin gives up after these many milliseconds.
+# A send / receive / representative change that times out AFTER the request was sent is reported as an
+# unknown outcome (Vault gets SUCCESS, SEVERE is logged; reconcile with /history) and is never retried
+# with a new id. Calls on other threads keep the normal timeouts.
+# mainThreadConnectTimeoutMs: 100-10000 (default 1000).
+# mainThreadReadTimeoutMs: 100-15000 (default 5000), or 0 to disable the short main-thread timeouts.
+mainThreadConnectTimeoutMs: 1000
+mainThreadReadTimeoutMs: 5000
+
 IP: "INSERT NODE IP HERE"
 walletSeed: "INSERT WALLET SEED HERE"
 # Don't touch walletID unless you know what you're doing

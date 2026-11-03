@@ -5,6 +5,7 @@ import banano.bananominecraft.bananoeconomy.classes.TransactionRecord;
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.enums.TransactionDirection;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.wallet.MainThreadGuard;
 import banano.bananominecraft.bananoeconomy.wallet.NodeWalletSigner;
 import banano.bananominecraft.bananoeconomy.wallet.WalletSigner;
 import com.google.gson.JsonArray;
@@ -65,7 +66,8 @@ public class RPC
 
     public RPC(Plugin plugin, ConfigEngine configEngine)
     {
-        this(plugin, configEngine, new HttpUrlConnectionTransport());
+        this(plugin, configEngine, TimeoutPolicy.forConfig(configEngine, MainThreadGuard.forPlugin(plugin))
+                .wrap(new HttpUrlConnectionTransport()));
     }
 
     /**

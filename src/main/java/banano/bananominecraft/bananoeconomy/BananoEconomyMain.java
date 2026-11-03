@@ -14,6 +14,7 @@ import banano.bananominecraft.bananoeconomy.i18n.I18n;
 import banano.bananominecraft.bananoeconomy.io.BananoWebSocket;
 import banano.bananominecraft.bananoeconomy.io.EconomyFuncs;
 import banano.bananominecraft.bananoeconomy.io.HttpTransport;
+import banano.bananominecraft.bananoeconomy.io.TimeoutPolicy;
 import banano.bananominecraft.bananoeconomy.io.HttpUrlConnectionTransport;
 import banano.bananominecraft.bananoeconomy.io.RPC;
 import banano.bananominecraft.bananoeconomy.io.VaultConnector;
@@ -239,7 +240,10 @@ public final class BananoEconomyMain extends JavaPlugin
      */
     private RPC createRpc()
     {
-        HttpTransport http = new HttpUrlConnectionTransport();
+        // One transport for every node call (RPC, node wallet signer, light wallet RPC): it applies the
+        // short main-thread timeouts whenever the caller is on the primary thread.
+        HttpTransport http = TimeoutPolicy.forConfig(this.configEngine, MainThreadGuard.forPlugin(this))
+                .wrap(new HttpUrlConnectionTransport());
 
         if (!this.configEngine.isLightMode())
         {

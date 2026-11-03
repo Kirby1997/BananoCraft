@@ -31,25 +31,54 @@ public class HttpUrlConnectionTransport implements HttpTransport
     @Override
     public String post(String url, String jsonPayload) throws IOException
     {
+        return doPost(url, jsonPayload, CONNECT_TIMEOUT_MS, READ_TIMEOUT_MS, TOTAL_DEADLINE_MS);
+    }
+
+    /**
+     * Honours both timeouts; the total-response deadline is {@code min(TOTAL_DEADLINE_MS, readTimeoutMs)}.
+     */
+    @Override
+    public String post(String url, String jsonPayload, int connectTimeoutMs, int readTimeoutMs) throws IOException
+    {
+        if (connectTimeoutMs < 0 || readTimeoutMs < 0)
+        {
+            throw new IllegalArgumentException("timeouts must not be negative");
+        }
+        return doPost(url, jsonPayload, connectTimeoutMs, readTimeoutMs,
+                Math.min(TOTAL_DEADLINE_MS, readTimeoutMs == 0 ? TOTAL_DEADLINE_MS : readTimeoutMs));
+    }
+
+    private String doPost(String url, String jsonPayload, int connectTimeoutMs, int readTimeoutMs,
+                          long totalDeadlineMs) throws IOException
+    {
         HttpURLConnection con = (HttpURLConnection) new URL(url).openConnection();
         con.setRequestMethod("POST");
         con.setRequestProperty("Content-Type", "application/json; utf-8");
         con.setRequestProperty("Accept", "application/json");
-        con.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        con.setReadTimeout(READ_TIMEOUT_MS);
+        con.setConnectTimeout(connectTimeoutMs);
+        con.setReadTimeout(readTimeoutMs);
         // Never let a response redirect a request (some carry the wallet seed) to another host.
         con.setInstanceFollowRedirects(false);
         con.setDoOutput(true);
 
-        // Write request — let the exception propagate so callers don't attempt
-        // to read a response that will never arrive.
+        // Phase 1: connect and buffer the body. HttpURLConnection opens the socket in getOutputStream()
+        // but only puts the request on the wire when the response is first requested, so a failure here
+        // means the node cannot have received (let alone acted on) the request. Plain IOException.
         try (OutputStream os = con.getOutputStream())
         {
             byte[] input = jsonPayload.getBytes(StandardCharsets.UTF_8);
             os.write(input, 0, input.length);
         }
+        catch (IOException ex)
+        {
+            con.disconnect();
+            throw ex;
+        }
 
-        long deadline = System.nanoTime() + TOTAL_DEADLINE_MS * 1_000_000L;
+        // Phase 2: from here the request may have reached the node, so every failure (read timeout,
+        // reset, error status, oversized or too slow response) is a RequestSentIOException: the caller
+        // cannot know whether the node acted on it.
+        long deadline = System.nanoTime() + totalDeadlineMs * 1_000_000L;
         ByteArrayOutputStream response = new ByteArrayOutputStream();
         try (InputStream in = con.getInputStream())
         {
@@ -65,7 +94,7 @@ public class HttpUrlConnectionTransport implements HttpTransport
                 }
                 if (System.nanoTime() > deadline)
                 {
-                    throw new IOException("Node response exceeded " + TOTAL_DEADLINE_MS + " ms");
+                    throw new IOException("Node response exceeded " + totalDeadlineMs + " ms");
                 }
             }
         }
@@ -74,7 +103,7 @@ public class HttpUrlConnectionTransport implements HttpTransport
             // Only drop the socket on failure: after a fully read, closed response the JDK returns the
             // connection to its keep-alive pool, so the next RPC skips a new TCP/TLS handshake.
             con.disconnect();
-            throw ex;
+            throw new RequestSentIOException(ex);
         }
 
         return response.toString(StandardCharsets.UTF_8).trim();

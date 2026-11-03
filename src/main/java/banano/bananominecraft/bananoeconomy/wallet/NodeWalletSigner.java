@@ -2,7 +2,9 @@ package banano.bananominecraft.bananoeconomy.wallet;
 
 import banano.bananominecraft.bananoeconomy.configuration.ConfigEngine;
 import banano.bananominecraft.bananoeconomy.exceptions.TransactionError;
+import banano.bananominecraft.bananoeconomy.exceptions.UnknownOutcomeError;
 import banano.bananominecraft.bananoeconomy.io.HttpTransport;
+import banano.bananominecraft.bananoeconomy.io.RequestSentIOException;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -41,6 +43,36 @@ public class NodeWalletSigner implements WalletSigner
     private String sendPost(String payload) throws Exception
     {
         return http.post(configEngine.getNodeAddress(), payload);
+    }
+
+    /** True if {@code e} (or a cause) is a failure after the request was sent to the node. */
+    private static boolean requestWasSent(Throwable e)
+    {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause())
+        {
+            if (t instanceof RequestSentIOException)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Maps a transport failure of a state-changing action: after the request was sent the node may
+     * have acted on it, so the outcome is unknown (never a plain failure, never retried with a new
+     * id); before that it is the plain {@link TransactionError} with {@code failureMessage}.
+     */
+    private TransactionError failure(Exception e, String action, String failureMessage)
+    {
+        if (requestWasSent(e))
+        {
+            plugin.getLogger().log(Level.SEVERE, "No answer from the node for '" + action + "' after the request"
+                    + " was sent - outcome UNKNOWN (it may have been processed). Check /history before retrying.", e);
+            return new UnknownOutcomeError();
+        }
+        plugin.getLogger().log(Level.SEVERE, "Failed to " + action + ".", e);
+        return new TransactionError(failureMessage);
     }
 
     @Override
@@ -169,8 +201,7 @@ public class NodeWalletSigner implements WalletSigner
         }
         catch (final Exception e)
         {
-            plugin.getLogger().log(Level.SEVERE, "Failed to sendTransaction.", e);
-            throw new TransactionError("Send transaction failed");
+            throw failure(e, "send", "Send transaction failed");
         }
 
         return extractBlock(json, "Send transaction resulted in missing block");
@@ -195,8 +226,7 @@ public class NodeWalletSigner implements WalletSigner
         }
         catch (final Exception e)
         {
-            plugin.getLogger().log(Level.SEVERE, "Failed to setRepresentative.", e);
-            throw new TransactionError("Set representative failed");
+            throw failure(e, "account_representative_set", "Set representative failed");
         }
 
         return extractBlock(json, "Set representative resulted in missing block");
@@ -221,8 +251,7 @@ public class NodeWalletSigner implements WalletSigner
         }
         catch (final Exception e)
         {
-            plugin.getLogger().log(Level.SEVERE, "Failed to receiveBlock.", e);
-            throw new TransactionError("Receive transaction failed");
+            throw failure(e, "receive", "Receive transaction failed");
         }
 
         return extractBlock(json, "Receive transaction resulted in missing block");

@@ -729,6 +729,40 @@ class ConfigEngineTest
     }
 
     @Test
+    void mainThreadTimeouts_defaultsReadAndValidation()
+    {
+        ConfigEngine defaults = new ConfigEngine(plugin);
+        assertEquals(1000, defaults.getMainThreadConnectTimeoutMs());
+        assertEquals(5000, defaults.getMainThreadReadTimeoutMs());
+
+        when(config.getInt("mainThreadConnectTimeoutMs", 1000)).thenReturn(250);
+        when(config.getInt("mainThreadReadTimeoutMs", 5000)).thenReturn(2000);
+        ConfigEngine custom = new ConfigEngine(plugin);
+        assertEquals(250, custom.getMainThreadConnectTimeoutMs());
+        assertEquals(2000, custom.getMainThreadReadTimeoutMs());
+
+        // 0 read timeout disables the feature and is kept as 0.
+        when(config.getInt("mainThreadReadTimeoutMs", 5000)).thenReturn(0);
+        assertEquals(0, new ConfigEngine(plugin).getMainThreadReadTimeoutMs());
+
+        // Out of range falls back to the defaults.
+        when(config.getInt("mainThreadConnectTimeoutMs", 1000)).thenReturn(0);
+        when(config.getInt("mainThreadReadTimeoutMs", 5000)).thenReturn(-1);
+        ConfigEngine bad = new ConfigEngine(plugin);
+        assertEquals(1000, bad.getMainThreadConnectTimeoutMs());
+        assertEquals(5000, bad.getMainThreadReadTimeoutMs());
+
+        when(config.getInt("mainThreadConnectTimeoutMs", 1000)).thenReturn(10_001);
+        when(config.getInt("mainThreadReadTimeoutMs", 5000)).thenReturn(50);
+        ConfigEngine bad2 = new ConfigEngine(plugin);
+        assertEquals(1000, bad2.getMainThreadConnectTimeoutMs());
+        assertEquals(5000, bad2.getMainThreadReadTimeoutMs());
+
+        when(config.getInt("mainThreadReadTimeoutMs", 5000)).thenReturn(15_001);
+        assertEquals(5000, new ConfigEngine(plugin).getMainThreadReadTimeoutMs());
+    }
+
+    @Test
     void defaultRepresentative_usesConfiguredValue_whenValid()
     {
         String rep = validAddress(11);

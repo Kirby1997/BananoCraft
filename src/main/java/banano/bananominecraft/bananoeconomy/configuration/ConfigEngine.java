@@ -46,6 +46,14 @@ public class ConfigEngine
     public static final int DEFAULT_WALLET_INDEX_SCAN_LIMIT = 10_000;
     public static final int MAX_WALLET_INDEX_SCAN_LIMIT = 1_000_000;
 
+    /** Main-thread RPC timeouts (never longer than the transport's normal 10 s connect / 15 s read). */
+    public static final int DEFAULT_MAIN_THREAD_CONNECT_TIMEOUT_MS = 1_000;
+    public static final int MIN_MAIN_THREAD_CONNECT_TIMEOUT_MS     = 100;
+    public static final int MAX_MAIN_THREAD_CONNECT_TIMEOUT_MS     = 10_000;
+    public static final int DEFAULT_MAIN_THREAD_READ_TIMEOUT_MS    = 5_000;
+    public static final int MIN_MAIN_THREAD_READ_TIMEOUT_MS        = 100;
+    public static final int MAX_MAIN_THREAD_READ_TIMEOUT_MS        = 15_000;
+
     private static final String SEED_PLACEHOLDER      = "INSERT WALLET SEED HERE";
     private static final String WALLET_ID_PLACEHOLDER = "INSERT WALLET ID FROM NODE HERE";
     private static final String BANK_SEED_PLACEHOLDER = "INSERT BANK WALLET SEED HERE";
@@ -70,6 +78,10 @@ public class ConfigEngine
     private int    workThreads = DEFAULT_WORK_THREADS;
     private String defaultRepresentative = "";
     private int    walletIndexScanLimit = DEFAULT_WALLET_INDEX_SCAN_LIMIT;
+
+    // --- RPC timeouts when called on the server's primary thread (0 read timeout = disabled) ---
+    private volatile int mainThreadConnectTimeoutMs = DEFAULT_MAIN_THREAD_CONNECT_TIMEOUT_MS;
+    private volatile int mainThreadReadTimeoutMs    = DEFAULT_MAIN_THREAD_READ_TIMEOUT_MS;
 
     // --- block explorer ---
     private String explorerAccount = "https://creeper.banano.cc/explorer/account/";
@@ -284,6 +296,7 @@ public class ConfigEngine
         }
 
         initialiseWalletMode(configuration);
+        initialiseMainThreadTimeouts(configuration);
 
         // Nag the admin until they delete the one-time seed backup file.
         // Skip on the startup that just wrote the file — the generation SEVERE is sufficient.
@@ -357,6 +370,33 @@ public class ConfigEngine
             this.walletId = WalletSigner.LIGHT_PLAYER_WALLET_ID;
             this.bankWalletId = isBankSeedConfigured() ? WalletSigner.LIGHT_BANK_WALLET_ID : "";
         }
+    }
+
+    /**
+     * Reads mainThreadConnectTimeoutMs / mainThreadReadTimeoutMs. A read timeout of 0 disables the
+     * feature; any other out-of-range value falls back to the default with a warning.
+     */
+    private void initialiseMainThreadTimeouts(FileConfiguration configuration)
+    {
+        int connect = configuration.getInt("mainThreadConnectTimeoutMs", DEFAULT_MAIN_THREAD_CONNECT_TIMEOUT_MS);
+        if (connect < MIN_MAIN_THREAD_CONNECT_TIMEOUT_MS || connect > MAX_MAIN_THREAD_CONNECT_TIMEOUT_MS)
+        {
+            plugin.getLogger().warning("mainThreadConnectTimeoutMs must be between "
+                    + MIN_MAIN_THREAD_CONNECT_TIMEOUT_MS + " and " + MAX_MAIN_THREAD_CONNECT_TIMEOUT_MS
+                    + " (got " + connect + ") - using " + DEFAULT_MAIN_THREAD_CONNECT_TIMEOUT_MS + ".");
+            connect = DEFAULT_MAIN_THREAD_CONNECT_TIMEOUT_MS;
+        }
+        this.mainThreadConnectTimeoutMs = connect;
+
+        int read = configuration.getInt("mainThreadReadTimeoutMs", DEFAULT_MAIN_THREAD_READ_TIMEOUT_MS);
+        if (read != 0 && (read < MIN_MAIN_THREAD_READ_TIMEOUT_MS || read > MAX_MAIN_THREAD_READ_TIMEOUT_MS))
+        {
+            plugin.getLogger().warning("mainThreadReadTimeoutMs must be 0 (disabled) or between "
+                    + MIN_MAIN_THREAD_READ_TIMEOUT_MS + " and " + MAX_MAIN_THREAD_READ_TIMEOUT_MS
+                    + " (got " + read + ") - using " + DEFAULT_MAIN_THREAD_READ_TIMEOUT_MS + ".");
+            read = DEFAULT_MAIN_THREAD_READ_TIMEOUT_MS;
+        }
+        this.mainThreadReadTimeoutMs = read;
     }
 
     // -------------------------------------------------------------------------
@@ -570,6 +610,14 @@ public class ConfigEngine
 
     /** Highest derivation index tried when matching legacy records to the seed (default 10000). */
     public int     getWalletIndexScanLimit()      { return this.walletIndexScanLimit; }
+
+    // --- main-thread RPC timeouts ---
+
+    /** Connect timeout (ms) for node calls made on the primary thread (default 1000). */
+    public int     getMainThreadConnectTimeoutMs() { return this.mainThreadConnectTimeoutMs; }
+
+    /** Read timeout (ms) for node calls made on the primary thread (default 5000); 0 = feature disabled. */
+    public int     getMainThreadReadTimeoutMs()   { return this.mainThreadReadTimeoutMs; }
 
     // --- block explorer ---
 
